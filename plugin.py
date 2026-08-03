@@ -206,9 +206,9 @@ def _make_tool_class(
 class MaiBotCompatPlugin(BasePlugin):
     """MaiBot 官方 SDK 2.7.1 受限桥插件根组件。"""
 
-    plugin_name = "MofoxForMaibotPulgins"
+    plugin_name = "mofox_for_maibot_plugins"
     plugin_description = "在 Neo-MoFox 中运行受限的官方 MaiBot SDK 2.7.1 插件"
-    plugin_version = "0.2.0"
+    plugin_version = "0.1.0"
     configs = [MaiBotCompatConfig]
 
     def __init__(self, config: MaiBotCompatConfig | None = None) -> None:
@@ -282,26 +282,40 @@ def _configured_timeout(config: Any) -> float:
 
 
 def _migrate_legacy_paths() -> None:
-    """仅在新路径缺失时复制旧错误插件名的配置和数据，绝不覆盖冲突。"""
+    """仅在最新路径缺失时复制旧插件名的配置和数据，绝不覆盖冲突。"""
     for base in (Path("config") / "plugins", Path("data") / "plugins"):
+        # 旧错误名 -> 上一版名 -> 当前名，逐级迁移
         legacy = base / "EMofoxForMaibotPulgins"
-        current = base / "MofoxForMaibotPulgins"
-        if not legacy.exists():
-            continue
-        if current.exists():
-            logger.warning(
-                f"MaiBot 名称迁移检测到双路径，未覆盖: {legacy} -> {current}"
-            )
+        previous = base / "MofoxForMaibotPulgins"
+        current = base / "mofox_for_maibot_plugins"
+        # 先把旧错误名迁移到上一版名（保留原逻辑）
+        if legacy.exists() and not previous.exists():
+            try:
+                previous.parent.mkdir(parents=True, exist_ok=True)
+                if legacy.is_dir():
+                    shutil.copytree(legacy, previous)
+                else:
+                    shutil.copy2(legacy, previous)
+                logger.info(f"MaiBot 名称迁移完成: {legacy} -> {previous}")
+            except OSError as exc:
+                logger.error(f"MaiBot 名称迁移失败 {legacy} -> {previous}: {exc}")
+        # 再把上一版名迁移到当前名
+        source = previous if previous.exists() else (legacy if legacy.exists() else None)
+        if not source or current.exists():
+            if source and current.exists():
+                logger.warning(
+                    f"MaiBot 名称迁移检测到双路径，未覆盖: {source} -> {current}"
+                )
             continue
         try:
             current.parent.mkdir(parents=True, exist_ok=True)
-            if legacy.is_dir():
-                shutil.copytree(legacy, current)
+            if source.is_dir():
+                shutil.copytree(source, current)
             else:
-                shutil.copy2(legacy, current)
-            logger.info(f"MaiBot 名称迁移完成: {legacy} -> {current}")
+                shutil.copy2(source, current)
+            logger.info(f"MaiBot 名称迁移完成: {source} -> {current}")
         except OSError as exc:
-            logger.error(f"MaiBot 名称迁移失败 {legacy} -> {current}: {exc}")
+            logger.error(f"MaiBot 名称迁移失败 {source} -> {current}: {exc}")
 
 
 __all__ = ["MaiBotBridge", "MaiBotCompatPlugin", "MaiBotPluginBridge"]

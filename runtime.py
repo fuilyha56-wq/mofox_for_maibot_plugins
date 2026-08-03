@@ -25,7 +25,13 @@ from typing import Any
 
 from packaging.requirements import InvalidRequirement, Requirement
 
-from src.app.plugin_system.api import llm_api, message_api, permission_api, send_api, stream_api
+from src.app.plugin_system.api import (
+    llm_api,
+    message_api,
+    permission_api,
+    send_api,
+    stream_api,
+)
 from src.core.models.message import Message, MessageType
 from src.kernel.concurrency import get_task_manager
 from src.kernel.llm import LLMPayload, ROLE, Text
@@ -44,7 +50,9 @@ from .sdk import SDK_VERSION, require_official_sdk
 logger = get_logger("mofox_maibot_compat.runtime")
 
 _SUPPORTED_TYPES = frozenset({"COMMAND", "TOOL", "API", "EVENT_HANDLER"})
-_REJECTED_TYPES = frozenset({"HOOK_HANDLER", "HOME_CARD", "MESSAGE_GATEWAY", "WORKFLOW_STEP"})
+_REJECTED_TYPES = frozenset(
+    {"HOOK_HANDLER", "HOME_CARD", "MESSAGE_GATEWAY", "WORKFLOW_STEP"}
+)
 _SUPPORTED_CAPABILITIES = frozenset(
     {
         "send.text",
@@ -203,7 +211,11 @@ class MaiBotRealm:
             plugin_id, name = normalized_name.rsplit(".", 1)
             candidates = [
                 record
-                for (record_plugin_id, record_name, record_version), record in self._apis.items()
+                for (
+                    record_plugin_id,
+                    record_name,
+                    record_version,
+                ), record in self._apis.items()
                 if record_plugin_id == plugin_id
                 and record_name == name
                 and (not normalized_version or record_version == normalized_version)
@@ -215,11 +227,17 @@ class MaiBotRealm:
                 if record_name == normalized_name
                 and (not normalized_version or record_version == normalized_version)
             ]
-        candidates = [record for record in candidates if record.unit.state is MaiBotUnitState.ACTIVE]
+        candidates = [
+            record
+            for record in candidates
+            if record.unit.state is MaiBotUnitState.ACTIVE
+        ]
         if not candidates:
             raise ApiUnavailableError(f"桥域 API 不可用: {api_name}@{version or '*'}")
         if len(candidates) != 1:
-            raise ApiUnavailableError(f"桥域 API 名称不唯一: {api_name}@{version or '*'}")
+            raise ApiUnavailableError(
+                f"桥域 API 名称不唯一: {api_name}@{version or '*'}"
+            )
         return candidates[0]
 
 
@@ -267,8 +285,14 @@ class MaiBotRuntime:
             self._assert_lifecycle_overrides()
             self.instance.set_plugin_config(self.instance.build_default_config())
             paths = self.sdk.PluginPaths(
-                data_dir=Path("data") / "plugins" / "MofoxForMaibotPulgins" / self.slug,
-                runtime_dir=Path("temp") / "plugins" / "MofoxForMaibotPulgins" / self.slug,
+                data_dir=Path("data")
+                / "plugins"
+                / "mofox_for_maibot_plugins"
+                / self.slug,
+                runtime_dir=Path("temp")
+                / "plugins"
+                / "mofox_for_maibot_plugins"
+                / self.slug,
             )
             paths.data_dir.mkdir(parents=True, exist_ok=True)
             paths.runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -313,7 +337,9 @@ class MaiBotRuntime:
             """等待活动外部调用释放其租约。"""
             async with self._lease_condition:
                 if self._active_calls:
-                    await self._lease_condition.wait_for(lambda: self._active_calls == 0)
+                    await self._lease_condition.wait_for(
+                        lambda: self._active_calls == 0
+                    )
 
         try:
             await asyncio.wait_for(
@@ -326,7 +352,9 @@ class MaiBotRuntime:
                 task.cancel()
         if self.instance is not None:
             try:
-                await asyncio.wait_for(self.instance.on_unload(), timeout=max(0.01, timeout))
+                await asyncio.wait_for(
+                    self.instance.on_unload(), timeout=max(0.01, timeout)
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"MaiBot 单元 {self.plugin_id} on_unload 失败: {exc}")
         self.components.clear()
@@ -366,7 +394,9 @@ class MaiBotRuntime:
             blocked = False
             current = message
             for component in self.components:
-                if component.component_type != "COMMAND" or not _command_matches(component, text):
+                if component.component_type != "COMMAND" or not _command_matches(
+                    component, text
+                ):
                     continue
                 matched = True
                 result = _call_accepted(
@@ -379,7 +409,11 @@ class MaiBotRuntime:
                     result = await result
                 blocked = _parse_command_result(component.name, result) or blocked
             event_handlers = sorted(
-                (item for item in self.components if item.component_type == "EVENT_HANDLER"),
+                (
+                    item
+                    for item in self.components
+                    if item.component_type == "EVENT_HANDLER"
+                ),
                 key=lambda item: (-int(item.metadata.get("weight", 0)), item.order),
             )
             for component in event_handlers:
@@ -398,7 +432,9 @@ class MaiBotRuntime:
         finally:
             await self.release_lease()
 
-    async def execute_tool(self, external_name: str, stream_id: str, **kwargs: Any) -> tuple[bool, Any]:
+    async def execute_tool(
+        self, external_name: str, stream_id: str, **kwargs: Any
+    ) -> tuple[bool, Any]:
         """执行 namespaced Tool 对应的官方 handler。"""
         component = next(
             (item for item, _ in self.dynamic_tools if item.name == external_name), None
@@ -419,7 +455,9 @@ class MaiBotRuntime:
         finally:
             await self.release_lease()
 
-    def tool_schema(self, component: MaiBotComponent, namespaced_name: str) -> dict[str, Any]:
+    def tool_schema(
+        self, component: MaiBotComponent, namespaced_name: str
+    ) -> dict[str, Any]:
         """从官方 Tool metadata 生成保留原始参数语义的宿主 schema。"""
         raw = component.metadata.get("parameters_raw")
         if isinstance(raw, dict) and raw:
@@ -444,7 +482,11 @@ class MaiBotRuntime:
                     }
                     if bool(item.get("required", True)):
                         required.append(name)
-                schema = {"type": "object", "properties": properties, "required": required}
+                schema = {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                }
         return {
             "type": "function",
             "function": {
@@ -458,14 +500,19 @@ class MaiBotRuntime:
             },
         }
 
-    def build_dynamic_api_records(self, declarations: list[dict[str, Any]]) -> list[MaiBotApiRecord]:
+    def build_dynamic_api_records(
+        self, declarations: list[dict[str, Any]]
+    ) -> list[MaiBotApiRecord]:
         """把官方动态 API 声明映射为可调用的桥域 API。"""
         if self.instance is None:
             raise UnitUnavailableError("MaiBot 实例不可用")
         records: list[MaiBotApiRecord] = []
         seen: set[tuple[str, str, str]] = set()
         for declaration in declarations:
-            if not isinstance(declaration, dict) or str(declaration.get("type") or "").upper() != "API":
+            if (
+                not isinstance(declaration, dict)
+                or str(declaration.get("type") or "").upper() != "API"
+            ):
                 raise ApiUnavailableError("动态 API 声明必须是官方 API 组件")
             name = str(declaration.get("name") or "").strip()
             metadata = declaration.get("metadata")
@@ -495,14 +542,18 @@ class MaiBotRuntime:
             )
         return records
 
-    async def apply_config_transaction(self, data: dict[str, Any], version: str) -> None:
+    async def apply_config_transaction(
+        self, data: dict[str, Any], version: str
+    ) -> None:
         """在内存中原子更新官方配置，回调失败时恢复旧快照。"""
         if self.instance is None:
             raise UnitUnavailableError("MaiBot 实例不可用")
         previous = self.instance.get_plugin_config_data()
         try:
             self.instance.set_plugin_config(data)
-            await self.instance.on_config_update("self", self.instance.get_plugin_config_data(), version)
+            await self.instance.on_config_update(
+                "self", self.instance.get_plugin_config_data(), version
+            )
         except Exception as exc:  # noqa: BLE001
             try:
                 self.instance.set_plugin_config(previous)
@@ -564,7 +615,9 @@ class MaiBotRuntime:
                 __import__(module_name)
                 module = sys.modules.get(module_name)
             if module is None:
-                raise MaiBotUnitAdmissionError(f"官方 MaiBot SDK 子模块不可用: {module_name}")
+                raise MaiBotUnitAdmissionError(
+                    f"官方 MaiBot SDK 子模块不可用: {module_name}"
+                )
 
     def _create_instance(self, module: types.ModuleType) -> Any:
         """使用 factory 或唯一官方 MaiBotPlugin 子类创建实例。"""
@@ -580,7 +633,9 @@ class MaiBotRuntime:
                 and item is not self.sdk.MaiBotPlugin
             ]
             if len(candidates) != 1:
-                raise MaiBotUnitAdmissionError("外部插件必须提供 create_plugin() 或唯一 MaiBotPlugin 子类")
+                raise MaiBotUnitAdmissionError(
+                    "外部插件必须提供 create_plugin() 或唯一 MaiBotPlugin 子类"
+                )
             instance = candidates[0]()
         if not isinstance(instance, self.sdk.MaiBotPlugin):
             raise MaiBotUnitAdmissionError("外部 factory 未返回官方 MaiBotPlugin")
@@ -589,7 +644,9 @@ class MaiBotRuntime:
     def _assert_lifecycle_overrides(self) -> None:
         """拒绝保留 SDK 基类强制生命周期的插件。"""
         for name in ("on_load", "on_unload", "on_config_update"):
-            if getattr(type(self.instance), name, None) is getattr(self.sdk.MaiBotPlugin, name, None):
+            if getattr(type(self.instance), name, None) is getattr(
+                self.sdk.MaiBotPlugin, name, None
+            ):
                 raise MaiBotUnitAdmissionError(f"外部 MaiBot 插件必须覆盖 {name}()")
 
     def _collect_components(self) -> None:
@@ -607,16 +664,22 @@ class MaiBotRuntime:
         for order, declaration in enumerate(declarations):
             component = self._parse_component(declaration, order)
             if component.component_type in _REJECTED_TYPES:
-                raise MaiBotUnitAdmissionError(f"不支持 MaiBot 组件: {component.component_type}")
+                raise MaiBotUnitAdmissionError(
+                    f"不支持 MaiBot 组件: {component.component_type}"
+                )
             if component.component_type not in _SUPPORTED_TYPES:
-                raise MaiBotUnitAdmissionError(f"未知 MaiBot 组件: {component.component_type}")
+                raise MaiBotUnitAdmissionError(
+                    f"未知 MaiBot 组件: {component.component_type}"
+                )
             if component.component_type == "COMMAND":
                 pattern = str(component.metadata.get("command_pattern") or "")
                 if pattern:
                     try:
                         re.compile(pattern)
                     except re.error as exc:
-                        raise MaiBotUnitAdmissionError(f"命令正则无效 {component.name}: {exc}") from exc
+                        raise MaiBotUnitAdmissionError(
+                            f"命令正则无效 {component.name}: {exc}"
+                        ) from exc
             elif component.component_type == "EVENT_HANDLER":
                 if str(component.metadata.get("event_type") or "") != "on_message":
                     raise MaiBotUnitAdmissionError("仅支持 ON_MESSAGE EventHandler")
@@ -648,14 +711,18 @@ class MaiBotRuntime:
         components_module = sys.modules.get("maibot_sdk.components")
         marker_name = "__maibot_component_info__"
         if components_module is not None:
-            marker_name = str(getattr(components_module, "_COMPONENT_INFO_ATTR", marker_name))
+            marker_name = str(
+                getattr(components_module, "_COMPONENT_INFO_ATTR", marker_name)
+            )
         for name in dir(type(self.instance)):
             try:
                 method = getattr(type(self.instance), name)
             except Exception:  # noqa: BLE001
                 continue
             info = getattr(method, marker_name, None)
-            component_type = str(getattr(getattr(info, "type", None), "value", "") or "").upper()
+            component_type = str(
+                getattr(getattr(info, "type", None), "value", "") or ""
+            ).upper()
             if component_type in _REJECTED_TYPES:
                 raise MaiBotUnitAdmissionError(f"不支持 MaiBot 组件: {component_type}")
 
@@ -686,7 +753,11 @@ class MaiBotRuntime:
         del timeout_ms
         if plugin_id != self.plugin_id:
             raise PermissionError("MaiBot RPC plugin_id 与当前单元不匹配")
-        if method not in {"cap.call", "host.route_message", "host.update_message_gateway_state"}:
+        if method not in {
+            "cap.call",
+            "host.route_message",
+            "host.update_message_gateway_state",
+        }:
             raise PermissionError(f"不允许 MaiBot Host RPC: {method}")
         if method != "cap.call":
             raise UnsupportedMaiBotCapabilityError(f"未映射 MaiBot Host RPC: {method}")
@@ -698,10 +769,14 @@ class MaiBotRuntime:
             raise UnsupportedMaiBotCapabilityError("cap.call args 必须是字典")
         return await self._dispatch_capability(capability, args)
 
-    async def _dispatch_capability(self, capability: str, args: dict[str, Any]) -> dict[str, Any]:
+    async def _dispatch_capability(
+        self, capability: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
         """严格把支持的 capability 路由到 Neo-MoFox 公开 API。"""
         if capability not in _SUPPORTED_CAPABILITIES:
-            raise UnsupportedMaiBotCapabilityError(f"未映射 MaiBot capability: {capability}")
+            raise UnsupportedMaiBotCapabilityError(
+                f"未映射 MaiBot capability: {capability}"
+            )
         if capability == "send.text":
             return {"success": await self._send_text(args)}
         if capability == "send.image":
@@ -709,14 +784,20 @@ class MaiBotRuntime:
         if capability == "send.emoji":
             return {"success": await self._send_image(args, image=False)}
         if capability == "config.get":
-            value = _lookup(self.instance.get_plugin_config_data(), str(args.get("key") or ""), args.get("default"))
+            value = _lookup(
+                self.instance.get_plugin_config_data(),
+                str(args.get("key") or ""),
+                args.get("default"),
+            )
             return {"success": True, "value": value}
         if capability == "config.get_all":
             return {"success": True, "value": self.instance.get_plugin_config_data()}
         if capability == "config.get_plugin":
             requested = str(args.get("plugin_name") or "").strip()
             if requested and requested != self.plugin_id:
-                raise UnsupportedMaiBotCapabilityError("桥仅允许读取当前 MaiBot 单元配置")
+                raise UnsupportedMaiBotCapabilityError(
+                    "桥仅允许读取当前 MaiBot 单元配置"
+                )
             return {"success": True, "value": self.instance.get_plugin_config_data()}
         if capability == "api.call":
             result = await self.realm.call_api(
@@ -727,9 +808,17 @@ class MaiBotRuntime:
             )
             return {"success": True, "result": result}
         if capability == "api.get":
-            return {"success": True, "api": self.realm.get_api(str(args.get("api_name") or ""), str(args.get("version") or ""))}
+            return {
+                "success": True,
+                "api": self.realm.get_api(
+                    str(args.get("api_name") or ""), str(args.get("version") or "")
+                ),
+            }
         if capability == "api.list":
-            return {"success": True, "apis": self.realm.list_apis(str(args.get("plugin_id") or ""))}
+            return {
+                "success": True,
+                "apis": self.realm.list_apis(str(args.get("plugin_id") or "")),
+            }
         if capability == "api.replace_dynamic":
             apis = args.get("apis")
             if not isinstance(apis, list):
@@ -767,8 +856,13 @@ class MaiBotRuntime:
                 group_id=str(args.get("group_id") or ""),
                 chat_type=str(args.get("chat_type") or "private"),
             )
-            return {"success": True, "stream": {"stream_id": getattr(stream, "stream_id", "")}}
-        raise UnsupportedMaiBotCapabilityError(f"未映射 MaiBot capability: {capability}")
+            return {
+                "success": True,
+                "stream": {"stream_id": getattr(stream, "stream_id", "")},
+            }
+        raise UnsupportedMaiBotCapabilityError(
+            f"未映射 MaiBot capability: {capability}"
+        )
 
     async def _send_text(self, args: dict[str, Any]) -> bool:
         """按来源消息的会话、平台与回复目标发送文本。"""
@@ -803,9 +897,13 @@ class MaiBotRuntime:
         task = str(args.get("task") or "").strip()
         model = str(args.get("model") or "").strip()
         if not task and not model:
-            raise UnsupportedMaiBotCapabilityError("llm.generate 必须显式指定 task 或 model")
+            raise UnsupportedMaiBotCapabilityError(
+                "llm.generate 必须显式指定 task 或 model"
+            )
         if task and model:
-            raise UnsupportedMaiBotCapabilityError("llm.generate 不能同时指定 task 和 model")
+            raise UnsupportedMaiBotCapabilityError(
+                "llm.generate 不能同时指定 task 和 model"
+            )
         selected_model = task or model
         model_set = (
             llm_api.get_model_set_by_task(task)
@@ -830,7 +928,9 @@ class MaiBotRuntime:
             "reasoning": response.reasoning_content or "",
             "reasoning_content": response.reasoning_content or "",
             "reasoning_parts": list(response.reasoning_parts or []),
-            "tool_calls": [_tool_call_to_dict(call) for call in response.call_list or []],
+            "tool_calls": [
+                _tool_call_to_dict(call) for call in response.call_list or []
+            ],
             "model": selected_model,
         }
 
@@ -849,7 +949,9 @@ class MaiBotRuntime:
         plain_text: str,
     ) -> Message:
         """构建保留来源流、平台、目标和 reply 的公开宿主出站消息。"""
-        target_group_id = source.extra.get("group_id") or source.extra.get("target_group_id")
+        target_group_id = source.extra.get("group_id") or source.extra.get(
+            "target_group_id"
+        )
         target_user_id = source.extra.get("target_user_id") or source.sender_id
         extra: dict[str, Any] = {}
         if str(source.chat_type or "").lower() == "group" and target_group_id:
@@ -870,14 +972,18 @@ class MaiBotRuntime:
     def _cleanup_modules(self) -> None:
         """清理外部插件私有模块前缀。"""
         for module_name in list(sys.modules):
-            if module_name == self.module_prefix or module_name.startswith(f"{self.module_prefix}."):
+            if module_name == self.module_prefix or module_name.startswith(
+                f"{self.module_prefix}."
+            ):
                 sys.modules.pop(module_name, None)
         self.module = None
 
 
 def namespaced_tool_name(slug: str, external_name: str) -> str:
     """返回严格隔离的宿主 Tool 名称。"""
-    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", str(external_name or "").strip()).strip("_")
+    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", str(external_name or "").strip()).strip(
+        "_"
+    )
     if not normalized:
         raise MaiBotUnitAdmissionError("MaiBot Tool 名称不能为空")
     return f"maibot__{slug}__{normalized}"
@@ -891,7 +997,9 @@ def prepare_runtime(realm: MaiBotRealm, plugin_dir: str | Path) -> Any:
         try:
             source = source_file.read_text(encoding="utf-8")
         except OSError as exc:
-            raise MaiBotUnitAdmissionError(f"无法读取外部插件源码: {source_file}") from exc
+            raise MaiBotUnitAdmissionError(
+                f"无法读取外部插件源码: {source_file}"
+            ) from exc
         if re.search(r"(?m)^\s*from\s+src\.(?:plugin_system|config)\b", source):
             uses_legacy_api = True
             break
@@ -930,16 +1038,22 @@ def _read_manifest(directory: Path) -> dict[str, Any]:
             raise MaiBotUnitAdmissionError("外部插件 SDK 上限不包含 2.7.1")
     declared = manifest.get("capabilities")
     if isinstance(declared, list):
-        unsupported = sorted({str(item) for item in declared if str(item) not in _SUPPORTED_CAPABILITIES})
+        unsupported = sorted(
+            {str(item) for item in declared if str(item) not in _SUPPORTED_CAPABILITIES}
+        )
         if unsupported:
-            raise MaiBotUnitAdmissionError("外部 manifest 声明未映射 capability: " + ", ".join(unsupported))
+            raise MaiBotUnitAdmissionError(
+                "外部 manifest 声明未映射 capability: " + ", ".join(unsupported)
+            )
     _validate_manifest_dependencies(manifest)
     return manifest
 
 
 def _validate_manifest_dependencies(manifest: dict[str, Any]) -> None:
     """确认 manifest 声明的 Python 依赖已由受控环境安装，桥不隐式安装。"""
-    raw_dependencies = manifest.get("python_dependencies", manifest.get("dependencies", []))
+    raw_dependencies = manifest.get(
+        "python_dependencies", manifest.get("dependencies", [])
+    )
     if raw_dependencies is None:
         return
     if not isinstance(raw_dependencies, list):
@@ -950,14 +1064,20 @@ def _validate_manifest_dependencies(manifest: dict[str, Any]) -> None:
             declarations.append(item)
             continue
         if not isinstance(item, dict):
-            raise MaiBotUnitAdmissionError("外部 manifest 的 dependencies 项必须是字符串或对象")
+            raise MaiBotUnitAdmissionError(
+                "外部 manifest 的 dependencies 项必须是字符串或对象"
+            )
         dependency_type = str(item.get("type") or "python_package").strip().lower()
         if dependency_type not in {"python_package", "python", "pip"}:
             continue
         name = str(item.get("name") or "").strip()
-        version_spec = str(item.get("version_spec") or item.get("version") or "").strip()
+        version_spec = str(
+            item.get("version_spec") or item.get("version") or ""
+        ).strip()
         if not name:
-            raise MaiBotUnitAdmissionError("外部 manifest 的 Python dependency 缺少 name")
+            raise MaiBotUnitAdmissionError(
+                "外部 manifest 的 Python dependency 缺少 name"
+            )
         declarations.append(f"{name}{version_spec}")
     for declaration in declarations:
         requirement_text = declaration.strip()
@@ -971,11 +1091,15 @@ def _validate_manifest_dependencies(manifest: dict[str, Any]) -> None:
             ) from exc
         package_name = requirement.name
         if package_name.lower().replace("_", "-") in {"yesmai", "maibot-yesmai"}:
-            raise MaiBotUnitAdmissionError("标准 MaiBot 2.7.1 bridge 不接受 YesMai 依赖")
+            raise MaiBotUnitAdmissionError(
+                "标准 MaiBot 2.7.1 bridge 不接受 YesMai 依赖"
+            )
         try:
             installed_version = importlib.metadata.version(package_name)
         except importlib.metadata.PackageNotFoundError as exc:
-            raise MaiBotUnitAdmissionError(f"外部 manifest 依赖未安装: {declaration}") from exc
+            raise MaiBotUnitAdmissionError(
+                f"外部 manifest 依赖未安装: {declaration}"
+            ) from exc
         if requirement.specifier and installed_version not in requirement.specifier:
             raise MaiBotUnitAdmissionError(
                 f"外部 manifest 依赖版本不满足: {declaration}（已安装 {installed_version}）"
@@ -988,7 +1112,9 @@ def _reject_yesmai_imports(plugin_dir: Path) -> None:
         try:
             source = source_file.read_text(encoding="utf-8")
         except OSError as exc:
-            raise MaiBotUnitAdmissionError(f"无法读取外部插件源码: {source_file}") from exc
+            raise MaiBotUnitAdmissionError(
+                f"无法读取外部插件源码: {source_file}"
+            ) from exc
         if re.search(
             r"(?m)^\s*(?:from\s+(?:com\.yesmai|yesmai)\b|import\s+(?:com\.yesmai|yesmai)\b)",
             source,
@@ -1018,15 +1144,20 @@ def _version_tuple(value: str) -> tuple[int, ...]:
 
 
 def _command_matches(component: MaiBotComponent, text: str) -> bool:
-    """按官方 command_pattern 或声明名称/aliases 匹配消息。"""
+    """按官方 command_pattern 或声明名称/aliases 匹配消息。
+
+    遵循 MaiBot ``find_command_by_text`` 语义：有 pattern 时用 ``re.search``
+    （非 ``re.match``），无 pattern 时遍历 aliases 做 ``str.startswith``。
+    ``component.name`` 作为默认 alias 以兼容仅声明名称的 Command。
+    """
     pattern = str(component.metadata.get("command_pattern") or "")
     if pattern:
-        return re.match(pattern, text) is not None
-    words = text.lstrip("/").split(maxsplit=1)
-    if not words:
-        return False
-    aliases = {component.name, *[str(alias) for alias in component.metadata.get("aliases", [])]}
-    return words[0] in aliases
+        return re.search(pattern, text) is not None
+    aliases = [
+        component.name,
+        *[str(alias) for alias in component.metadata.get("aliases", [])],
+    ]
+    return any(text.startswith(alias) for alias in aliases if alias)
 
 
 def _parse_command_result(name: str, result: Any) -> bool:
@@ -1056,10 +1187,14 @@ def _parse_event_result(
             f"MaiBot EventHandler {component.name} 必须返回 dict 或 None"
         )
     modified_message = result.get("modified_message", result.get("message"))
-    message = previous if modified_message is None else _apply_modified_message(
-        component.name,
-        previous,
-        modified_message,
+    message = (
+        previous
+        if modified_message is None
+        else _apply_modified_message(
+            component.name,
+            previous,
+            modified_message,
+        )
     )
     blocked = bool(result.get("blocked", False)) or not bool(
         result.get("continue_processing", True)
@@ -1110,23 +1245,39 @@ def _apply_modified_message(name: str, previous: Message, modified: Any) -> Mess
 def _normalize_tool_result(result: Any) -> tuple[bool, Any]:
     """将官方 Tool/Action 结果归一化为宿主二元 Tool 返回。"""
     if isinstance(result, tuple):
-        return (bool(result[0]) if result else True, result[1] if len(result) > 1 else "")
+        return (
+            bool(result[0]) if result else True,
+            result[1] if len(result) > 1 else "",
+        )
     if isinstance(result, dict):
-        return bool(result.get("success", True)), result.get("content", result.get("result", result))
+        return bool(result.get("success", True)), result.get(
+            "content", result.get("result", result)
+        )
     return True, result
 
 
 def _call_accepted(handler: Callable[..., Any], **kwargs: Any) -> Any:
     """只注入外部处理器签名明确接受的关键字参数。"""
     signature = inspect.signature(handler)
-    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    ):
         return handler(**kwargs)
-    return handler(**{name: value for name, value in kwargs.items() if name in signature.parameters})
+    return handler(
+        **{
+            name: value
+            for name, value in kwargs.items()
+            if name in signature.parameters
+        }
+    )
 
 
 def _normalize_inbound_message(message: Message) -> dict[str, Any]:
     """构建官方命令可消费的结构化消息，raw_message 为规范化段列表。"""
-    group_id = str(message.extra.get("group_id") or message.extra.get("target_group_id") or "")
+    group_id = str(
+        message.extra.get("group_id") or message.extra.get("target_group_id") or ""
+    )
     segments, protocol_unknown_segments = _normalize_segments(message)
     host_media = message.extra.get("media")
     host_unknown_segments = message.extra.get("unknown_segments")
@@ -1150,13 +1301,16 @@ def _normalize_inbound_message(message: Message) -> dict[str, Any]:
             "role": message.sender_role,
         },
         "reply_to": message.reply_to,
-        "is_admin": str(message.sender_role or "").lower() in {"owner", "operator", "admin"},
+        "is_admin": str(message.sender_role or "").lower()
+        in {"owner", "operator", "admin"},
         "media": media,
         "unknown_segments": unknown_segments,
     }
 
 
-def _normalize_segments(message: Message) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _normalize_segments(
+    message: Message,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """从公开原始数据和消息字段创建已知段及未映射协议段。"""
     raw = message.raw_data
     source = raw.get("message") if isinstance(raw, dict) else None
@@ -1165,24 +1319,32 @@ def _normalize_segments(message: Message) -> tuple[list[dict[str, Any]], list[di
     if isinstance(source, list):
         for item in source:
             if not isinstance(item, dict):
-                unknown_segments.append({"type": "invalid", "data": copy.deepcopy(item)})
+                unknown_segments.append(
+                    {"type": "invalid", "data": copy.deepcopy(item)}
+                )
                 continue
             kind = str(item.get("type") or "").lower()
             data = item.get("data")
             if not isinstance(data, dict):
                 data = {}
             if kind == "text":
-                segments.append({"type": "text", "data": {"text": str(data.get("text") or "")}})
+                segments.append(
+                    {"type": "text", "data": {"text": str(data.get("text") or "")}}
+                )
             elif kind == "at":
                 target = str(data.get("target_user_id") or data.get("qq") or "").strip()
                 if target:
                     segments.append({"type": "at", "data": {"target_user_id": target}})
             elif kind == "reply":
-                segments.append({"type": "reply", "data": {"id": str(data.get("id") or "")}})
+                segments.append(
+                    {"type": "reply", "data": {"id": str(data.get("id") or "")}}
+                )
             elif kind in {"image", "emoji", "voice", "record", "video", "file"}:
                 segments.append({"type": kind, "data": copy.deepcopy(data)})
             else:
-                unknown_segments.append({"type": kind or "unknown", "data": copy.deepcopy(data)})
+                unknown_segments.append(
+                    {"type": kind or "unknown", "data": copy.deepcopy(data)}
+                )
     text = str(message.processed_plain_text or message.content or "")
     has_text_segment = any(item["type"] == "text" for item in segments)
     if text and not has_text_segment:
@@ -1216,10 +1378,18 @@ def _llm_payloads(prompt: Any) -> list[LLMPayload]:
         for item in prompt:
             if isinstance(item, dict):
                 role_name = str(item.get("role") or "user").lower()
-                role = ROLE.SYSTEM if role_name == "system" else ROLE.ASSISTANT if role_name == "assistant" else ROLE.USER
+                role = (
+                    ROLE.SYSTEM
+                    if role_name == "system"
+                    else ROLE.ASSISTANT
+                    if role_name == "assistant"
+                    else ROLE.USER
+                )
                 content = item.get("content", "")
                 if not isinstance(content, str):
-                    raise UnsupportedMaiBotCapabilityError("llm.generate 仅支持文本 content")
+                    raise UnsupportedMaiBotCapabilityError(
+                        "llm.generate 仅支持文本 content"
+                    )
                 payloads.append(LLMPayload(role, Text(content)))
             else:
                 payloads.append(LLMPayload(ROLE.USER, Text(str(item))))
@@ -1244,15 +1414,25 @@ def _with_llm_overrides(
     normalized_max_tokens: int | None = None
     if temperature is not None:
         if isinstance(temperature, bool) or not isinstance(temperature, int | float):
-            raise UnsupportedMaiBotCapabilityError("llm.generate 的 temperature 必须是数值")
+            raise UnsupportedMaiBotCapabilityError(
+                "llm.generate 的 temperature 必须是数值"
+            )
         normalized_temperature = float(temperature)
     if max_tokens is not None:
-        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0:
-            raise UnsupportedMaiBotCapabilityError("llm.generate 的 max_tokens 必须是正整数")
+        if (
+            isinstance(max_tokens, bool)
+            or not isinstance(max_tokens, int)
+            or max_tokens <= 0
+        ):
+            raise UnsupportedMaiBotCapabilityError(
+                "llm.generate 的 max_tokens 必须是正整数"
+            )
         normalized_max_tokens = max_tokens
     for entry in model_set:
         if not isinstance(entry, Mapping):
-            raise UnsupportedMaiBotCapabilityError("llm.generate 模型集合条目必须是字典")
+            raise UnsupportedMaiBotCapabilityError(
+                "llm.generate 模型集合条目必须是字典"
+            )
         copied = dict(entry)
         if normalized_temperature is not None:
             copied["temperature"] = normalized_temperature

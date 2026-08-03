@@ -419,10 +419,10 @@ class MaiBotLegacyRuntime:
             if component.component_type != "COMMAND":
                 continue
             pattern = str(component.metadata.get("command_pattern") or "")
-            match = re.match(pattern, text) if pattern else None
+            match = re.search(pattern, text) if pattern else None
             if pattern and match is None:
                 continue
-            if not pattern and text.lstrip("/").split(maxsplit=1)[0] != component.name:
+            if not pattern and not text.startswith(component.name):
                 continue
             matched = True
             command_class = self._component_classes[component.name]
