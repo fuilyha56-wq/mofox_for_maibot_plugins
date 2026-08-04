@@ -208,7 +208,7 @@ class MaiBotCompatPlugin(BasePlugin):
 
     plugin_name = "mofox_for_maibot_plugins"
     plugin_description = "在 Neo-MoFox 中运行受限的官方 MaiBot SDK 2.7.1 插件"
-    plugin_version = "0.1.0"
+    plugin_version = "0.1.2"
     configs = [MaiBotCompatConfig]
 
     def __init__(self, config: MaiBotCompatConfig | None = None) -> None:

@@ -51,7 +51,7 @@ uv pip install "maibot-plugin-sdk==2.7.1"
 ### 1. 确认前置条件
 
 - `maibot-plugin-sdk==2.7.1` 已安装（主程序启动时由 `bot.py` 自动安装，离线环境需手动 `uv pip install "maibot-plugin-sdk==2.7.1"`）；
-- 桥本身在 WebUI → 插件管理页显示为已加载（`MofoxForMaibotPulgins v0.2.0`）；
+- 桥本身在 WebUI → 插件管理页显示为已加载（`MofoxForMaibotPulgins v0.1.2`）；
 - 若外部插件需要发送消息，OneBot 协议端应已连接（桥通过宿主 `send_api` 发送）。
 
 ### 2. 放入 MaiBot 插件
