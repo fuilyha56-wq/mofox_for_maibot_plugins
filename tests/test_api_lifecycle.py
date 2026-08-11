@@ -92,7 +92,7 @@ class TestRequesterVisibility:
     async def test_private_api_owner_can_call(self) -> None:
         """owner 可以调用自己的 private API。"""
         realm = MaiBotRealm()
-        owner = _make_unit("owner", MaiBotUnitState.ACTIVE)
+        owner = _make_unit("owner", MaiBotUnitState.ACTIVE, realm)
         _register_api(realm, owner, "secret", "1", lambda: "ok")
 
         result = await realm.call_api(owner, "owner.secret", "1", {})
@@ -104,8 +104,8 @@ class TestRequesterVisibility:
         from mofox_for_maibot_plugins.errors import ApiUnavailableError
 
         realm = MaiBotRealm()
-        owner = _make_unit("owner", MaiBotUnitState.ACTIVE)
-        other = _make_unit("other", MaiBotUnitState.ACTIVE)
+        owner = _make_unit("owner", MaiBotUnitState.ACTIVE, realm)
+        other = _make_unit("other", MaiBotUnitState.ACTIVE, realm)
         _register_api(realm, owner, "secret", "1", lambda: "ok")
 
         with pytest.raises(ApiUnavailableError):
@@ -115,8 +115,8 @@ class TestRequesterVisibility:
     async def test_public_api_other_unit_can_call(self) -> None:
         """其他 unit 可以调用 public API。"""
         realm = MaiBotRealm()
-        owner = _make_unit("owner", MaiBotUnitState.ACTIVE)
-        other = _make_unit("other", MaiBotUnitState.ACTIVE)
+        owner = _make_unit("owner", MaiBotUnitState.ACTIVE, realm)
+        other = _make_unit("other", MaiBotUnitState.ACTIVE, realm)
         _register_api(realm, owner, "pub", "1", lambda: "ok", public=True)
 
         result = await realm.call_api(other, "owner.pub", "1", {})
@@ -125,8 +125,8 @@ class TestRequesterVisibility:
     def test_get_api_respects_visibility(self) -> None:
         """api.get 按 requester 过滤；private 对其他 unit 返回 None。"""
         realm = MaiBotRealm()
-        owner = _make_unit("owner", MaiBotUnitState.ACTIVE)
-        other = _make_unit("other", MaiBotUnitState.ACTIVE)
+        owner = _make_unit("owner", MaiBotUnitState.ACTIVE, realm)
+        other = _make_unit("other", MaiBotUnitState.ACTIVE, realm)
         _register_api(realm, owner, "secret", "1", lambda: "ok")
 
         assert realm.get_api(owner, "owner.secret", "1") is not None
@@ -135,8 +135,8 @@ class TestRequesterVisibility:
     def test_list_apis_filters_visibility(self) -> None:
         """api.list 只返回调用方可见的活动 API。"""
         realm = MaiBotRealm()
-        owner = _make_unit("owner", MaiBotUnitState.ACTIVE)
-        other = _make_unit("other", MaiBotUnitState.ACTIVE)
+        owner = _make_unit("owner", MaiBotUnitState.ACTIVE, realm)
+        other = _make_unit("other", MaiBotUnitState.ACTIVE, realm)
         _register_api(realm, owner, "secret", "1", lambda: "ok")
         _register_api(realm, owner, "pub", "1", lambda: "ok", public=True)
 
@@ -155,7 +155,7 @@ class TestTombstone:
         from mofox_for_maibot_plugins.errors import ApiUnavailableError
 
         realm = MaiBotRealm()
-        owner = _make_unit("owner", MaiBotUnitState.ACTIVE)
+        owner = _make_unit("owner", MaiBotUnitState.ACTIVE, realm)
         _register_api(realm, owner, "old", "1", lambda: "ok", dynamic=True)
         # 替换为空的动态集合
         result = await realm.replace_dynamic_apis(owner, [], "已下线")
@@ -165,6 +165,125 @@ class TestTombstone:
         with pytest.raises(ApiUnavailableError) as exc_info:
             await realm.call_api(owner, "owner.old", "1", {})
         assert "已下线" in str(exc_info.value)
+
+    def test_get_api_returns_tombstone_metadata(self) -> None:
+        """api.get 对可见 tombstone 返回 online=False/revision/offline_reason。"""
+        realm = MaiBotRealm()
+        owner = _make_unit("owner", MaiBotUnitState.ACTIVE, realm)
+        _register_api(realm, owner, "old", "1", lambda: "ok", dynamic=True)
+        realm._apis.pop(("owner", "old", "1"), None)
+        realm._tombstones[("owner", "old", "1")] = ApiTombstone(
+            provider_plugin_id="owner",
+            api_name="old",
+            version="1",
+            public=False,
+            revision=3,
+            offline_reason="已下线",
+        )
+
+        meta = realm.get_api(owner, "owner.old", "1")
+        assert meta is not None
+        assert meta["online"] is False
+        assert meta["revision"] == 3
+        assert meta["offline_reason"] == "已下线"
+        assert "handler" not in meta
+
+    def test_private_tombstone_hidden_from_other_unit(self) -> None:
+        """private tombstone 对其他 unit 不可见。"""
+        realm = MaiBotRealm()
+        owner = _make_unit("owner", MaiBotUnitState.ACTIVE, realm)
+        other = _make_unit("other", MaiBotUnitState.ACTIVE, realm)
+        realm._tombstones[("owner", "old", "1")] = ApiTombstone(
+            provider_plugin_id="owner",
+            api_name="old",
+            version="1",
+            public=False,
+            revision=1,
+            offline_reason="已下线",
+        )
+
+        assert realm.get_api(other, "owner.old", "1") is None
+        assert realm.get_api(owner, "owner.old", "1") is not None
+
+    @pytest.mark.asyncio
+    async def test_revision_wired_on_replace(self) -> None:
+        """replace 后活动记录与 tombstone 携带递增 revision。"""
+        realm = MaiBotRealm()
+        owner = _make_unit("owner", MaiBotUnitState.ACTIVE, realm)
+
+        async def handler() -> str:
+            return "ok"
+
+        owner.instance = type(
+            "FakeInstance",
+            (),
+            {"_dynamic_api_handlers": {"h": handler}},
+        )()
+        _register_api(realm, owner, "a", "1", handler, dynamic=True)
+        _register_api(realm, owner, "b", "1", handler, dynamic=True)
+        # 第一次 replace：下线 a，保留 b → revision 1
+        await realm.replace_dynamic_apis(
+            owner,
+            [{"type": "API", "name": "b", "metadata": {"version": "1", "handler_name": "h"}}],
+            "v1",
+        )
+        assert realm._apis[("owner", "b", "1")].revision == 1
+        assert realm._tombstones[("owner", "a", "1")].revision == 1
+        # 第二次 replace：全部下线 → revision 2
+        await realm.replace_dynamic_apis(owner, [], "v2")
+        assert realm._tombstones[("owner", "b", "1")].revision == 2
+
+    def test_qualified_name_collision_rejected(self) -> None:
+        """不同 ApiKey 生成同一全名时准入失败。"""
+        from mofox_for_maibot_plugins.errors import ApiUnavailableError
+
+        realm = MaiBotRealm()
+        unit_a = _make_unit("a.b", MaiBotUnitState.ACTIVE, realm)
+        unit_c = _make_unit("a", MaiBotUnitState.ACTIVE, realm)
+        _register_api(realm, unit_a, "c", "1", lambda: "ok", public=True)
+        # unit a 注册静态 API "b.c" → 全名 "a.b.c" 与 ("a.b","c") 碰撞
+        unit_c.static_api_records = [
+            MaiBotApiRecord(
+                unit=unit_c,
+                plugin_id="a",
+                name="b.c",
+                version="1",
+                handler=lambda: "ok",
+                description="",
+                dynamic=False,
+                public=True,
+            )
+        ]
+        with pytest.raises(ApiUnavailableError):
+            realm.add_unit(unit_c)
+
+    @pytest.mark.asyncio
+    async def test_contextvar_reset_after_recursion_error(self) -> None:
+        """递归错误后 ContextVar 栈被正确 reset，后续调用不受污染。"""
+        from mofox_for_maibot_plugins.runtime import _api_call_stack
+
+        realm = MaiBotRealm()
+        unit_a = _make_unit("a", MaiBotUnitState.ACTIVE, realm)
+        unit_b = _make_unit("b", MaiBotUnitState.ACTIVE, realm)
+
+        async def handler_a() -> Any:
+            return await realm.call_api(unit_a, "b.b", "1", {})
+
+        async def handler_b() -> Any:
+            return await realm.call_api(unit_b, "a.a", "1", {})
+
+        _register_api(realm, unit_a, "a", "1", handler_a, public=True)
+        _register_api(realm, unit_b, "b", "1", handler_b, public=True)
+
+        with pytest.raises(ApiRecursionError):
+            await realm.call_api(unit_a, "a.a", "1", {})
+
+        # 栈应被 reset，后续普通调用不受污染
+        assert _api_call_stack.get() == ()
+        # 注册一个独立的普通 API 验证新调用链干净
+        _register_api(realm, unit_b, "plain", "1", lambda: "plain-ok", public=True)
+        result = await realm.call_api(unit_b, "b.plain", "1", {})
+        assert result == "plain-ok"
 
     @pytest.mark.asyncio
     async def test_republish_deletes_tombstone(self) -> None:

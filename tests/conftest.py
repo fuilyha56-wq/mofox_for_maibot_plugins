@@ -8,11 +8,30 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
 _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-_REPO_ROOT = Path(r"E:\Neo-mofox-instance\bot-3693525299\neo-mofox")
+
+
+def _resolve_repo_root() -> Path:
+    """解析 Neo-MoFox 主仓库根：优先环境变量，其次父目录推导，最后本地约定路径。"""
+    env_root = os.environ.get("NEO_MOFO_REPO_ROOT", "").strip()
+    if env_root:
+        return Path(env_root).resolve()
+    # 插件位于 <repo>/plugins/<plugin>/ 下时，向上推导两级
+    candidates = [
+        _PLUGIN_ROOT.parent.parent,
+        Path(r"E:\Neo-mofox-instance\bot-3693525299\neo-mofox"),
+    ]
+    for candidate in candidates:
+        if (candidate / "src").is_dir():
+            return candidate
+    return candidates[0]
+
+
+_REPO_ROOT = _resolve_repo_root()
 
 # Neo-MoFox 主仓库根（解析 from src.* 导入）
 _repo_str = str(_REPO_ROOT)

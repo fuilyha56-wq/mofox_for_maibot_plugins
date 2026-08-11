@@ -19,7 +19,7 @@ import re
 import sys
 import types
 from collections.abc import Callable, Coroutine, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -155,6 +155,11 @@ class MaiBotRealm:
                 raise MaiBotUnitAdmissionError(
                     f"桥域 API 冲突: {record.plugin_id}.{record.name}@{record.version}"
                 )
+        self._check_qualified_name_collisions(
+            unit, unit.static_api_records, existing=candidate, tombstones=self._tombstones
+        )
+        for record in unit.static_api_records:
+            key = (record.plugin_id, record.name, record.version)
             candidate[key] = record
         self._units[unit.plugin_id] = unit
         self._apis = candidate
@@ -175,6 +180,9 @@ class MaiBotRealm:
         self, unit: "MaiBotRuntime", records: list[MaiBotApiRecord]
     ) -> None:
         """on_load 成功后原子发布待提交动态 API，并递增 revision。"""
+        self._check_qualified_name_collisions(
+            unit, records, existing=self._apis, tombstones=self._tombstones
+        )
         candidate = {
             key: record
             for key, record in self._apis.items()
@@ -183,13 +191,17 @@ class MaiBotRealm:
         for record in records:
             key = (record.plugin_id, record.name, record.version)
             owner = candidate.get(key)
-            if owner is not None and owner.unit is not unit:
+            if owner is not None:
                 raise ApiUnavailableError(
-                    f"动态 API 与其他单元冲突: {record.plugin_id}.{record.name}@{record.version}"
+                    f"动态 API 与其他单元或静态 API 冲突: {record.plugin_id}.{record.name}@{record.version}"
                 )
             candidate[key] = record
+        next_revision = unit._dynamic_revision + 1
+        for record in records:
+            key = (record.plugin_id, record.name, record.version)
+            candidate[key] = replace(record, revision=next_revision)
         self._apis = candidate
-        unit._dynamic_revision += 1
+        unit._dynamic_revision = next_revision
 
     async def replace_dynamic_apis(
         self,
@@ -210,12 +222,15 @@ class MaiBotRealm:
             if not declarations
             else unit.build_dynamic_api_records(declarations)
         )
+        self._check_qualified_name_collisions(
+            unit, records, existing=self._apis, tombstones=self._tombstones
+        )
         if unit.state is MaiBotUnitState.ACTIVATING:
             unit._pending_dynamic_apis = records
             return {
                 "success": True,
                 "count": len(records),
-                "revision": unit._dynamic_revision,
+                "revision": unit._dynamic_revision + 1,
                 "offline_reason": normalized_reason,
             }
         new_keys = {(r.plugin_id, r.name, r.version) for r in records}
@@ -224,6 +239,7 @@ class MaiBotRealm:
             for key, record in self._apis.items()
             if record.unit is not unit or not record.dynamic
         }
+        next_revision = unit._dynamic_revision + 1
         new_tombstones = dict(self._tombstones)
         for key, record in self._apis.items():
             if record.unit is unit and record.dynamic and key not in new_keys:
@@ -232,7 +248,7 @@ class MaiBotRealm:
                     api_name=record.name,
                     version=record.version,
                     public=record.public,
-                    revision=record.revision,
+                    revision=next_revision,
                     offline_reason=normalized_reason,
                 )
         for key in new_keys:
@@ -240,20 +256,59 @@ class MaiBotRealm:
         for record in records:
             key = (record.plugin_id, record.name, record.version)
             owner = candidate.get(key)
-            if owner is not None and owner.unit is not unit:
+            if owner is not None:
                 raise ApiUnavailableError(
-                    f"动态 API 与其他单元冲突: {record.plugin_id}.{record.name}@{record.version}"
+                    f"动态 API 与其他单元或静态 API 冲突: {record.plugin_id}.{record.name}@{record.version}"
                 )
-            candidate[key] = record
+            candidate[key] = replace(record, revision=next_revision)
         self._apis = candidate
         self._tombstones = new_tombstones
-        unit._dynamic_revision += 1
+        unit._dynamic_revision = next_revision
         return {
             "success": True,
             "count": len(records),
             "revision": unit._dynamic_revision,
             "offline_reason": normalized_reason,
         }
+
+    def _check_qualified_name_collisions(
+        self,
+        unit: "MaiBotRuntime",
+        records: list[MaiBotApiRecord],
+        *,
+        existing: dict[tuple[str, str, str], MaiBotApiRecord],
+        tombstones: dict[tuple[str, str, str], ApiTombstone],
+    ) -> None:
+        """检查新记录与活动记录、tombstone 之间是否存在 qualified-name 碰撞。
+
+        qualified name 为 ``f"{plugin_id}.{api_name}"``。两个不同 ApiKey
+        生成同一全名（如 ``("a.b","c")`` 与 ``("a","b.c")``）时必须整次失败。
+        """
+        qualified_to_keys: dict[str, list[tuple[str, str, str]]] = {}
+        for key in list(existing) + list(tombstones):
+            plugin_id, api_name, _version = key
+            qualified_to_keys.setdefault(f"{plugin_id}.{api_name}", []).append(key)
+        for record in records:
+            qualified = f"{record.plugin_id}.{record.name}"
+            colliding = qualified_to_keys.get(qualified, [])
+            for key in colliding:
+                if key != (record.plugin_id, record.name, record.version):
+                    raise ApiUnavailableError(
+                        f"API 全名碰撞: {qualified} 由多个 ApiKey 生成"
+                    )
+            qualified_to_keys.setdefault(qualified, []).append(
+                (record.plugin_id, record.name, record.version)
+            )
+        # 新记录之间也不能碰撞
+        seen: dict[str, tuple[str, str, str]] = {}
+        for record in records:
+            qualified = f"{record.plugin_id}.{record.name}"
+            key = (record.plugin_id, record.name, record.version)
+            if qualified in seen and seen[qualified] != key:
+                raise ApiUnavailableError(
+                    f"API 全名碰撞: {qualified} 由多个 ApiKey 生成"
+                )
+            seen[qualified] = key
 
     async def call_api(
         self,
@@ -289,6 +344,12 @@ class MaiBotRealm:
             raise ApiDepthExceededError(
                 f"API 调用深度超限: {len(current_stack)} >= {_MAX_API_DEPTH}"
             )
+        # 审计：不记录 API 敏感参数
+        logger.debug(
+            f"API 调用审计 requester={requester.plugin_id} "
+            f"target={record.plugin_id}.{record.name}@{record.version} "
+            f"depth={len(current_stack) + 1}"
+        )
         token = _api_call_stack.set((*current_stack, target_key))
         try:
             await record.unit.acquire_lease()
@@ -303,10 +364,25 @@ class MaiBotRealm:
     def get_api(
         self, requester: "MaiBotRuntime", api_name: str, version: str
     ) -> dict[str, Any] | None:
-        """返回单个可见 API 的元数据。"""
+        """返回单个可见 API 的元数据；可见 tombstone 返回 offline 元数据。"""
         try:
             return _api_metadata(self._resolve_api(requester, api_name, version))
         except ApiUnavailableError:
+            tombstone = self._find_tombstone(
+                requester, str(api_name or "").strip(), str(version or "").strip()
+            )
+            if tombstone is not None:
+                return {
+                    "plugin_id": tombstone.provider_plugin_id,
+                    "name": tombstone.api_name,
+                    "version": tombstone.version,
+                    "description": "",
+                    "public": tombstone.public,
+                    "dynamic": True,
+                    "revision": tombstone.revision,
+                    "online": False,
+                    "offline_reason": tombstone.offline_reason,
+                }
             return None
 
     def list_apis(
