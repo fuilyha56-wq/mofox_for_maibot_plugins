@@ -1,4 +1,4 @@
-"""官方 MaiBot SDK 2.7.1 外部插件的受限桥运行时。
+"""官方 MaiBot SDK 2.8.0 外部插件的受限桥运行时。
 
 本模块不会注入本地 shim、不会加载 YesMai，也不会为没有公开宿主映射的能力
 伪造成功。每一个外部插件都是独立单元，在 Neo-MoFox 组件快照前完成导入、
@@ -242,7 +242,7 @@ class MaiBotRealm:
 
 
 class MaiBotRuntime:
-    """单个官方 MaiBot SDK 2.7.1 插件的隔离运行时。"""
+    """单个官方 MaiBot SDK 2.8.0 插件的隔离运行时。"""
 
     def __init__(self, realm: MaiBotRealm | None = None) -> None:
         """创建未加载的单元；默认桥域仅方便独立测试。"""
@@ -1049,7 +1049,7 @@ def _read_manifest(directory: Path) -> dict[str, Any]:
         if minimum and _version_tuple(minimum) > _version_tuple(SDK_VERSION):
             raise MaiBotUnitAdmissionError("外部插件要求更高版本 MaiBot SDK")
         if maximum and _version_tuple(maximum) < _version_tuple(SDK_VERSION):
-            raise MaiBotUnitAdmissionError("外部插件 SDK 上限不包含 2.7.1")
+            raise MaiBotUnitAdmissionError("外部插件 SDK 上限不包含 2.8.0")
     declared = manifest.get("capabilities")
     if isinstance(declared, list):
         unsupported = sorted(
@@ -1106,7 +1106,7 @@ def _validate_manifest_dependencies(manifest: dict[str, Any]) -> None:
         package_name = requirement.name
         if package_name.lower().replace("_", "-") in {"yesmai", "maibot-yesmai"}:
             raise MaiBotUnitAdmissionError(
-                "标准 MaiBot 2.7.1 bridge 不接受 YesMai 依赖"
+                "标准 MaiBot 2.8.0 bridge 不接受 YesMai 依赖"
             )
         try:
             installed_version = importlib.metadata.version(package_name)
@@ -1134,7 +1134,7 @@ def _reject_yesmai_imports(plugin_dir: Path) -> None:
             source,
         ):
             raise MaiBotUnitAdmissionError(
-                f"标准 MaiBot 2.7.1 bridge 不接受 YesMai 导入: {source_file.name}"
+                f"标准 MaiBot 2.8.0 bridge 不接受 YesMai 导入: {source_file.name}"
             )
 
 
