@@ -778,11 +778,11 @@ class MaiBotRuntime:
                 f"未映射 MaiBot capability: {capability}"
             )
         if capability == "send.text":
-            return {"success": await self._send_text(args)}
+            return await self._send_text(args)
         if capability == "send.image":
-            return {"success": await self._send_image(args, image=True)}
+            return await self._send_image(args, image=True)
         if capability == "send.emoji":
-            return {"success": await self._send_image(args, image=False)}
+            return await self._send_image(args, image=False)
         if capability == "config.get":
             value = _lookup(
                 self.instance.get_plugin_config_data(),
@@ -864,10 +864,14 @@ class MaiBotRuntime:
             f"未映射 MaiBot capability: {capability}"
         )
 
-    async def _send_text(self, args: dict[str, Any]) -> bool:
-        """按来源消息的会话、平台与回复目标发送文本。"""
+    async def _send_text(self, args: dict[str, Any]) -> dict[str, Any]:
+        """按来源消息的会话、平台与回复目标发送文本，返回结构化结果。
+
+        Returns:
+            包含 ``success``、``sent`` 和 ``message_id`` 的字典。
+        """
         source = self._source_message(str(args.get("stream_id") or ""))
-        return await send_api.send_message(
+        ok = await send_api.send_message(
             self._outbound_message(
                 source,
                 str(args.get("text") or ""),
@@ -875,15 +879,24 @@ class MaiBotRuntime:
                 str(args.get("text") or ""),
             )
         )
+        return {"success": ok, "sent": ok, "message_id": None}
 
-    async def _send_image(self, args: dict[str, Any], *, image: bool) -> bool:
-        """发送图片或表情，不将其降级成文本。"""
+    async def _send_image(self, args: dict[str, Any], *, image: bool) -> dict[str, Any]:
+        """发送图片或表情，不将其降级成文本，返回结构化结果。
+
+        Args:
+            args: capability 参数。
+            image: ``True`` 为图片，``False`` 为表情。
+
+        Returns:
+            包含 ``success``、``sent`` 和 ``message_id`` 的字典。
+        """
         source = self._source_message(str(args.get("stream_id") or ""))
         key = "image_base64" if image else "emoji_base64"
         data = str(args.get(key) or "").strip()
         if not data:
             raise UnsupportedMaiBotCapabilityError(f"{key} 不能为空")
-        return await send_api.send_message(
+        ok = await send_api.send_message(
             self._outbound_message(
                 source,
                 data,
@@ -891,6 +904,7 @@ class MaiBotRuntime:
                 "[图片]" if image else "[表情]",
             )
         )
+        return {"success": ok, "sent": ok, "message_id": None}
 
     async def _generate_llm(self, args: dict[str, Any]) -> dict[str, Any]:
         """通过公开 llm_api 执行仅文本的官方 LLM capability。"""
