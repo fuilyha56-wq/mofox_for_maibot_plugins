@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import copy
 import hashlib
 import importlib.metadata
@@ -38,6 +39,9 @@ from src.kernel.llm import LLMPayload, ROLE, Text
 from src.kernel.logger import get_logger
 
 from .errors import (
+    ApiDepthExceededError,
+    ApiPermissionError,
+    ApiRecursionError,
     ApiUnavailableError,
     ConfigTransactionError,
     InvalidEventHandlerResultError,
@@ -48,6 +52,12 @@ from .errors import (
 from .sdk import SDK_VERSION, require_official_sdk
 
 logger = get_logger("mofox_maibot_compat.runtime")
+
+# API 调用链递归检测 ContextVar 与最大深度
+_api_call_stack: contextvars.ContextVar[tuple[tuple[str, str, str], ...]] = (
+    contextvars.ContextVar("_api_call_stack", default=())
+)
+_MAX_API_DEPTH = 16
 
 _SUPPORTED_TYPES = frozenset({"COMMAND", "TOOL", "API", "EVENT_HANDLER"})
 _REJECTED_TYPES = frozenset(
@@ -80,6 +90,7 @@ class MaiBotUnitState(str, Enum):
     DISCOVERED = "discovered"
     PREPARED = "prepared"
     REGISTERED = "registered"
+    ACTIVATING = "activating"
     ACTIVE = "active"
     QUARANTINED = "quarantined"
     DRAINING = "draining"
@@ -108,6 +119,20 @@ class MaiBotApiRecord:
     handler: Callable[..., Any]
     description: str
     dynamic: bool
+    public: bool = False
+    revision: int = 0
+
+
+@dataclass(frozen=True)
+class ApiTombstone:
+    """已下线 API 的墓碑记录。"""
+
+    provider_plugin_id: str
+    api_name: str
+    version: str
+    public: bool
+    revision: int
+    offline_reason: str
 
 
 class MaiBotRealm:
@@ -117,6 +142,7 @@ class MaiBotRealm:
         """建立空的插件和 API 查找表。"""
         self._units: dict[str, MaiBotRuntime] = {}
         self._apis: dict[tuple[str, str, str], MaiBotApiRecord] = {}
+        self._tombstones: dict[tuple[str, str, str], ApiTombstone] = {}
 
     def add_unit(self, unit: "MaiBotRuntime") -> None:
         """原子登记一个已完成准入的单元及其静态 API。"""
@@ -134,23 +160,21 @@ class MaiBotRealm:
         self._apis = candidate
 
     def remove_unit(self, unit: "MaiBotRuntime") -> None:
-        """原子移除单元的静态与动态 API。"""
+        """原子移除单元的静态与动态 API 及其 tombstone。"""
         self._units.pop(unit.plugin_id, None)
         self._apis = {
             key: record for key, record in self._apis.items() if record.unit is not unit
         }
+        self._tombstones = {
+            key: ts
+            for key, ts in self._tombstones.items()
+            if ts.provider_plugin_id != unit.plugin_id
+        }
 
-    async def replace_dynamic_apis(
-        self,
-        unit: "MaiBotRuntime",
-        declarations: list[dict[str, Any]],
-        offline_reason: str,
-    ) -> dict[str, Any]:
-        """校验后一次性替换指定单元的全部动态 API。"""
-        del offline_reason
-        if unit.state is not MaiBotUnitState.ACTIVE:
-            raise UnitUnavailableError(f"MaiBot 单元不可同步动态 API: {unit.plugin_id}")
-        records = unit.build_dynamic_api_records(declarations)
+    def _commit_pending(
+        self, unit: "MaiBotRuntime", records: list[MaiBotApiRecord]
+    ) -> None:
+        """on_load 成功后原子发布待提交动态 API，并递增 revision。"""
         candidate = {
             key: record
             for key, record in self._apis.items()
@@ -165,7 +189,71 @@ class MaiBotRealm:
                 )
             candidate[key] = record
         self._apis = candidate
-        return {"success": True, "count": len(records)}
+        unit._dynamic_revision += 1
+
+    async def replace_dynamic_apis(
+        self,
+        unit: "MaiBotRuntime",
+        declarations: list[dict[str, Any]],
+        offline_reason: str,
+    ) -> dict[str, Any]:
+        """校验后一次性替换指定单元的全部动态 API，保存 tombstone。
+
+        ``ACTIVATING`` 阶段写入待提交集合，``ACTIVE`` 阶段直接替换活动集合。
+        """
+        if unit.state not in (MaiBotUnitState.ACTIVATING, MaiBotUnitState.ACTIVE):
+            raise UnitUnavailableError(f"MaiBot 单元不可同步动态 API: {unit.plugin_id}")
+        normalized_reason = str(offline_reason or "").strip() or "动态 API 已下线"
+        # 空集合表示全部下线，无需 handler 校验
+        records = (
+            []
+            if not declarations
+            else unit.build_dynamic_api_records(declarations)
+        )
+        if unit.state is MaiBotUnitState.ACTIVATING:
+            unit._pending_dynamic_apis = records
+            return {
+                "success": True,
+                "count": len(records),
+                "revision": unit._dynamic_revision,
+                "offline_reason": normalized_reason,
+            }
+        new_keys = {(r.plugin_id, r.name, r.version) for r in records}
+        candidate = {
+            key: record
+            for key, record in self._apis.items()
+            if record.unit is not unit or not record.dynamic
+        }
+        new_tombstones = dict(self._tombstones)
+        for key, record in self._apis.items():
+            if record.unit is unit and record.dynamic and key not in new_keys:
+                new_tombstones[key] = ApiTombstone(
+                    provider_plugin_id=record.plugin_id,
+                    api_name=record.name,
+                    version=record.version,
+                    public=record.public,
+                    revision=record.revision,
+                    offline_reason=normalized_reason,
+                )
+        for key in new_keys:
+            new_tombstones.pop(key, None)
+        for record in records:
+            key = (record.plugin_id, record.name, record.version)
+            owner = candidate.get(key)
+            if owner is not None and owner.unit is not unit:
+                raise ApiUnavailableError(
+                    f"动态 API 与其他单元冲突: {record.plugin_id}.{record.name}@{record.version}"
+                )
+            candidate[key] = record
+        self._apis = candidate
+        self._tombstones = new_tombstones
+        unit._dynamic_revision += 1
+        return {
+            "success": True,
+            "count": len(records),
+            "revision": unit._dynamic_revision,
+            "offline_reason": normalized_reason,
+        }
 
     async def call_api(
         self,
@@ -174,71 +262,123 @@ class MaiBotRealm:
         version: str,
         arguments: dict[str, Any],
     ) -> Any:
-        """调用唯一解析到的活动桥域 API。"""
-        del requester
-        record = self._resolve_api(api_name, version)
-        await record.unit.acquire_lease()
-        try:
-            result = _call_accepted(record.handler, **arguments)
-            return await result if inspect.isawaitable(result) else result
-        finally:
-            await record.unit.release_lease()
+        """调用唯一解析到的活动桥域 API，执行 requester visibility 与递归检测。
 
-    def get_api(self, api_name: str, version: str) -> dict[str, Any] | None:
+        Args:
+            requester: 发起调用的单元。
+            api_name: API 全名或短名。
+            version: API 版本。
+            arguments: 传递给 handler 的参数。
+
+        Returns:
+            API handler 的返回值。
+
+        Raises:
+            ApiUnavailableError: API 不存在或调用方无权访问。
+            ApiRecursionError: 检测到递归调用。
+            ApiDepthExceededError: 超过最大调用深度。
+        """
+        record = self._resolve_api(requester, api_name, version)
+        target_key = (record.plugin_id, record.name, record.version)
+        current_stack = _api_call_stack.get()
+        if target_key in current_stack:
+            raise ApiRecursionError(
+                f"API 递归调用检测: {record.plugin_id}.{record.name}@{record.version}"
+            )
+        if len(current_stack) >= _MAX_API_DEPTH:
+            raise ApiDepthExceededError(
+                f"API 调用深度超限: {len(current_stack)} >= {_MAX_API_DEPTH}"
+            )
+        token = _api_call_stack.set((*current_stack, target_key))
+        try:
+            await record.unit.acquire_lease()
+            try:
+                result = _call_accepted(record.handler, **arguments)
+                return await result if inspect.isawaitable(result) else result
+            finally:
+                await record.unit.release_lease()
+        finally:
+            _api_call_stack.reset(token)
+
+    def get_api(
+        self, requester: "MaiBotRuntime", api_name: str, version: str
+    ) -> dict[str, Any] | None:
         """返回单个可见 API 的元数据。"""
         try:
-            return _api_metadata(self._resolve_api(api_name, version))
+            return _api_metadata(self._resolve_api(requester, api_name, version))
         except ApiUnavailableError:
             return None
 
-    def list_apis(self, plugin_id: str = "") -> list[dict[str, Any]]:
-        """列出所有活动 API 的安全元数据。"""
+    def list_apis(
+        self, requester: "MaiBotRuntime", plugin_id: str = ""
+    ) -> list[dict[str, Any]]:
+        """列出调用方可见的全部活动 API。"""
         return [
             _api_metadata(record)
             for record in self._apis.values()
             if (not plugin_id or record.plugin_id == plugin_id)
             and record.unit.state is MaiBotUnitState.ACTIVE
+            and (record.public or record.unit is requester)
         ]
 
-    def _resolve_api(self, api_name: str, version: str) -> MaiBotApiRecord:
-        """解析全限定或唯一短 API 名称。"""
+    def _resolve_api(
+        self, requester: "MaiBotRuntime", api_name: str, version: str
+    ) -> MaiBotApiRecord:
+        """解析全限定或唯一短 API 名称，按 requester visibility 过滤。"""
         normalized_name = str(api_name or "").strip()
         normalized_version = str(version or "").strip()
         if not normalized_name:
             raise ApiUnavailableError("API 名称不能为空")
+        # 精确索引，不用 rsplit 反解析；先按全名匹配，再按短名匹配
         candidates: list[MaiBotApiRecord] = []
-        if "." in normalized_name:
-            plugin_id, name = normalized_name.rsplit(".", 1)
-            candidates = [
-                record
-                for (
-                    record_plugin_id,
-                    record_name,
-                    record_version,
-                ), record in self._apis.items()
-                if record_plugin_id == plugin_id
-                and record_name == name
-                and (not normalized_version or record_version == normalized_version)
-            ]
-        else:
-            candidates = [
-                record
-                for (_, record_name, record_version), record in self._apis.items()
-                if record_name == normalized_name
-                and (not normalized_version or record_version == normalized_version)
-            ]
-        candidates = [
+        for key, record in self._apis.items():
+            record_plugin_id, record_name, record_version = key
+            qualified = f"{record_plugin_id}.{record_name}"
+            if normalized_name == qualified or (
+                "." not in normalized_name and record_name == normalized_name
+            ):
+                if normalized_version and record_version != normalized_version:
+                    continue
+                candidates.append(record)
+        visible = [
             record
             for record in candidates
             if record.unit.state is MaiBotUnitState.ACTIVE
+            and (record.public or record.unit is requester)
         ]
-        if not candidates:
+        if not visible:
+            tombstone = self._find_tombstone(
+                requester, normalized_name, normalized_version
+            )
+            if tombstone is not None:
+                raise ApiUnavailableError(
+                    f"API 已下线: {tombstone.offline_reason}"
+                )
             raise ApiUnavailableError(f"桥域 API 不可用: {api_name}@{version or '*'}")
-        if len(candidates) != 1:
+        if len(visible) != 1:
             raise ApiUnavailableError(
                 f"桥域 API 名称不唯一: {api_name}@{version or '*'}"
             )
-        return candidates[0]
+        return visible[0]
+
+    def _find_tombstone(
+        self, requester: "MaiBotRuntime", api_name: str, version: str
+    ) -> ApiTombstone | None:
+        """查找调用方可见的 tombstone。"""
+        candidates: list[ApiTombstone] = []
+        for key, tombstone in self._tombstones.items():
+            ts_plugin_id, ts_name, ts_version = key
+            qualified = f"{ts_plugin_id}.{ts_name}"
+            if api_name == qualified or (
+                "." not in api_name and ts_name == api_name
+            ):
+                if version and ts_version != version:
+                    continue
+                if tombstone.public or ts_plugin_id == requester.plugin_id:
+                    candidates.append(tombstone)
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
 
 
 class MaiBotRuntime:
@@ -260,6 +400,8 @@ class MaiBotRuntime:
         self.components: list[MaiBotComponent] = []
         self.dynamic_tools: list[tuple[MaiBotComponent, str]] = []
         self.static_api_records: list[MaiBotApiRecord] = []
+        self._pending_dynamic_apis: list[MaiBotApiRecord] = []
+        self._dynamic_revision: int = 0
         self._messages: dict[str, Message] = {}
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._active_calls = 0
@@ -312,16 +454,34 @@ class MaiBotRuntime:
             self.state = MaiBotUnitState.REGISTERED
 
     async def activate(self) -> None:
-        """调用官方 on_load；失败只隔离当前单元。"""
+        """调用官方 on_load；失败只隔离当前单元。
+
+        在 on_load 前转入 ACTIVATING，允许动态 API 同步；
+        成功后转入 ACTIVE，失败转入 QUARANTINED。
+        """
         if self.state is not MaiBotUnitState.REGISTERED:
             raise UnitUnavailableError(f"MaiBot 单元未注册: {self.plugin_id}")
+        self.state = MaiBotUnitState.ACTIVATING
         try:
             await self.instance.on_load()
+            self._commit_pending_dynamic_apis()
             self.state = MaiBotUnitState.ACTIVE
         except Exception as exc:  # noqa: BLE001
+            self._discard_pending_dynamic_apis()
             self.state = MaiBotUnitState.QUARANTINED
             self.failure = f"on_load 失败: {type(exc).__name__}: {exc}"
             logger.error(f"MaiBot 单元隔离 {self.plugin_id}: {self.failure}")
+
+    def _commit_pending_dynamic_apis(self) -> None:
+        """on_load 成功后原子发布待提交动态 API。"""
+        if not self._pending_dynamic_apis:
+            return
+        self.realm._commit_pending(self, self._pending_dynamic_apis)
+        self._pending_dynamic_apis.clear()
+
+    def _discard_pending_dynamic_apis(self) -> None:
+        """on_load 失败时丢弃待提交动态 API。"""
+        self._pending_dynamic_apis.clear()
 
     async def drain_and_unload(self, timeout: float = 5.0) -> None:
         """停止新调用、取消受管任务、有界等待 lease 并运行 on_unload。"""
@@ -538,6 +698,7 @@ class MaiBotRuntime:
                     handler=handler,
                     description=str(metadata.get("description") or ""),
                     dynamic=True,
+                    public=bool(metadata.get("public", False)),
                 )
             )
         return records
@@ -565,8 +726,10 @@ class MaiBotRuntime:
 
     def register_task(self, coro: Coroutine[Any, Any, Any]) -> None:
         """为桥拥有的扩展协程创建 TaskManager 受管任务。"""
-        if self.state is not MaiBotUnitState.ACTIVE:
-            raise UnitUnavailableError("MaiBot 单元未激活，不能创建任务")
+        if self.state not in (MaiBotUnitState.ACTIVATING, MaiBotUnitState.ACTIVE):
+            raise UnitUnavailableError(
+                f"MaiBot 单元未激活，不能创建任务: {self.plugin_id} ({self.state.value})"
+            )
         task_info = get_task_manager().create_task(
             coro,
             name=f"compat:maibot:{self.slug}",
@@ -699,6 +862,7 @@ class MaiBotRuntime:
                         handler=component.handler,
                         description=str(component.metadata.get("description") or ""),
                         dynamic=False,
+                        public=bool(component.metadata.get("public", False)),
                     )
                 )
             components.append(component)
@@ -811,13 +975,17 @@ class MaiBotRuntime:
             return {
                 "success": True,
                 "api": self.realm.get_api(
-                    str(args.get("api_name") or ""), str(args.get("version") or "")
+                    self,
+                    str(args.get("api_name") or ""),
+                    str(args.get("version") or ""),
                 ),
             }
         if capability == "api.list":
             return {
                 "success": True,
-                "apis": self.realm.list_apis(str(args.get("plugin_id") or "")),
+                "apis": self.realm.list_apis(
+                    self, str(args.get("plugin_id") or "")
+                ),
             }
         if capability == "api.replace_dynamic":
             apis = args.get("apis")
@@ -1474,7 +1642,10 @@ def _api_metadata(record: MaiBotApiRecord) -> dict[str, Any]:
         "name": record.name,
         "version": record.version,
         "description": record.description,
+        "public": record.public,
         "dynamic": record.dynamic,
+        "revision": record.revision,
+        "online": True,
     }
 
 

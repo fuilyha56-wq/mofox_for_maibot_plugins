@@ -35,7 +35,25 @@ class ConfigTransactionError(MaiBotCompatError):
     """外部配置事务校验、回调或回滚失败时抛出。"""
 
 
+class ApiRecursionError(MaiBotCompatError):
+    """API 调用链检测到递归时抛出。"""
+
+
+class ApiDepthExceededError(MaiBotCompatError):
+    """API 调用链超过配置的最大深度时抛出。"""
+
+
+class ApiPermissionError(MaiBotCompatError):
+    """API 调用方无权访问目标 API 时抛出。
+
+    仅在 owner 内部诊断使用；跨 unit 对外折叠为 unavailable。
+    """
+
+
 __all__ = [
+    "ApiDepthExceededError",
+    "ApiPermissionError",
+    "ApiRecursionError",
     "ApiUnavailableError",
     "ConfigTransactionError",
     "InvalidEventHandlerResultError",
