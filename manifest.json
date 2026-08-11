@@ -1,7 +1,7 @@
 {
   "name": "mofox_for_maibot_plugins",
   "display_name": "MofoxForMaibotPulgins",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "在 MoFox 中加载受限的官方 MaiBot SDK 2.8.0 插件。",
   "author": "MoFox Community",
   "dependencies": {"plugins": [], "components": []},
