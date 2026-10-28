@@ -1,7 +1,7 @@
 # MaiBot 官方 SDK 兼容桥
 
 `MofoxForMaibotPulgins` 在 Neo-MoFox 内加载**可信的** MaiBot 插件，并且只接受官方
-`maibot-plugin-sdk==2.8.0`。它不是 import shim，也不会把未映射能力伪装为成功。
+`maibot-plugin-sdk==2.17.0`。它不是 import shim，也不会把未映射能力伪装为成功。
 
 > 本桥只加载可信插件，外部代码与宿主同进程执行，**不构成沙箱**。
 
@@ -10,13 +10,13 @@
 ## 前置依赖
 
 本桥**不依赖任何其它 Neo-MoFox 插件**，但强依赖官方 Python 包 `maibot-plugin-sdk`
-的固定版本 `2.8.0`。该包未安装或版本不满足时，桥会在准入阶段直接拒绝激活。
+的固定版本 `2.17.0`。该包未安装或版本不满足时，桥会在准入阶段直接拒绝激活。
 
 ### 依赖链
 
 ```mermaid
 flowchart LR
-    A["MofoxForMaibotPulgins<br/>(本桥)"] -->|强依赖| B["maibot-plugin-sdk == 2.8.0<br/>(Python 包)"]
+    A["MofoxForMaibotPulgins<br/>(本桥)"] -->|强依赖| B["maibot-plugin-sdk == 2.17.0<br/>(Python 包)"]
     A -.调用.-> C["Neo-MoFox 公开 API<br/>send_api / llm_api / stream_api / message_api"]
     A -.调用.-> D["OneBot 协议端<br/>(经宿主传输链路)"]
 ```
@@ -29,7 +29,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | 插件级 | `dependencies.plugins` | `[]` | 无前置 Neo-MoFox 插件依赖 |
 | 插件级 | `dependencies.components` | `[]` | 无前置组件依赖 |
-| Python 包 | `python_dependencies` | `["maibot-plugin-sdk==2.8.0"]` | 主程序启动时由 `bot.py` 统一安装；`dependencies_required=true` 时安装失败则整桥不加载 |
+| Python 包 | `python_dependencies` | `["maibot-plugin-sdk==2.17.0"]` | 主程序启动时由 `bot.py` 统一安装；`dependencies_required=true` 时安装失败则整桥不加载 |
 
 > `python_dependencies` 使用 pip requirement 格式，由
 > `src/app/runtime/bot.py` 在加载前通过 `pip install` 统一安装；
@@ -37,11 +37,11 @@ flowchart LR
 
 ### 需要自行安装的 Python 包
 
-`maibot-plugin-sdk==2.8.0` 已在 manifest 中声明，主程序会自动安装。
+`maibot-plugin-sdk==2.17.0` 已在 manifest 中声明，主程序会自动安装。
 若在离线环境，请预先执行：
 
 ```bash
-uv pip install "maibot-plugin-sdk==2.8.0"
+uv pip install "maibot-plugin-sdk==2.17.0"
 ```
 
 ---
@@ -50,8 +50,8 @@ uv pip install "maibot-plugin-sdk==2.8.0"
 
 ### 1. 确认前置条件
 
-- `maibot-plugin-sdk==2.8.0` 已安装（主程序启动时由 `bot.py` 自动安装，离线环境需手动 `uv pip install "maibot-plugin-sdk==2.8.0"`）；
-- 桥本身在 WebUI → 插件管理页显示为已加载（`MofoxForMaibotPulgins v0.1.4`）；
+- `maibot-plugin-sdk==2.17.0` 已安装（主程序启动时由 `bot.py` 自动安装，离线环境需手动 `uv pip install "maibot-plugin-sdk==2.17.0"`）；
+- 桥本身在 WebUI → 插件管理页显示为已加载（`MofoxForMaibotPulgins v0.2.1`）；
 - 若外部插件需要发送消息，OneBot 协议端应已连接（桥通过宿主 `send_api` 发送）。
 
 ### 2. 放入 MaiBot 插件
@@ -92,7 +92,7 @@ plugins/MofoxForMaibotPulgins/plugins/
 
 | 现象 | 排查方向 |
 | --- | --- |
-| 桥未加载 | 查看主程序日志 `deps_installer` 段，确认 `maibot-plugin-sdk==2.8.0` 安装成功；`dependencies_required=true` 时安装失败会移出加载队列 |
+| 桥未加载 | 查看主程序日志 `deps_installer` 段，确认 `maibot-plugin-sdk==2.17.0` 安装成功；`dependencies_required=true` 时安装失败会移出加载队列 |
 | 外部单元被隔离 | 查看日志中 `maibot_plugin_bridge` 的准入失败原因：缺少 `plugin.py`、`on_load()` 抛异常、声明了被拒绝的 capability（如 `@MessageGateway`）、YesMai 依赖等 |
 | LLM 调用失败 | `ctx.llm.generate()` 必须显式指定 `task` 或 `model`，不会回退默认；确认对应任务/模型在 Neo-MoFox 中可用 |
 | 调用被拒绝的能力 | 参见下方「明确拒绝的能力」章节，如 `send.hybrid`、`render.html2png`、`@LLMProvider` 等无映射的能力会返回稳定错误 |
@@ -124,7 +124,7 @@ MofoxForMaibotPulgins/
 | `@Command` | 一个桥事件处理器内按 pattern / aliases 分派；官方三元返回的阻断位会生效。 |
 | `@EventHandler(ON_MESSAGE)` | 按 `weight` 降序、同权稳定顺序派发；只能替换既有 `message` 参数。 |
 | `@Tool` | 在宿主组件快照前生成 `maibot__{slug}__{name}` 形式的 `BaseTool`。 |
-| 官方兼容 `@Action` | SDK 2.8.0 将其作为 Tool 声明处理，映射为同样的 `BaseTool`，**不会**创建 `BaseAction`。 |
+| 官方兼容 `@Action` | SDK 2.17.0 将其作为 Tool 声明处理，映射为同样的 `BaseTool`，**不会**创建 `BaseAction`。 |
 | `@API` / 动态 API | 仅在本桥 realm 内以 `(plugin_id, name, version)` 路由，替换原子化；卸载后不可调用。 |
 | `ctx.send.text()` | 经公开 `send_api.send_message()` 发送，保留来源 `stream_id`、平台、回复和群/私聊目标。 |
 | `ctx.send.image()` / `ctx.send.emoji()` | 使用真实 `MessageType.IMAGE` / `MessageType.EMOJI` 发送；不可表达的输入会失败。 |
@@ -144,7 +144,7 @@ MofoxForMaibotPulgins/
 - YesMai 或 `com.yesmai.*` 路径；
 - 宿主组件快照完成后才声明的新 Tool。
 
-官方 SDK 2.8.0 没有公开的受管后台任务 capability。桥内部任务会使用
+官方 SDK 2.17.0 没有公开的受管后台任务 capability。桥内部任务会使用
 `TaskManager` 跟踪和 drain，但不会伪造 `ctx.register_task()` 或声称第三方插件可通过
 官方 `PluginContext` 取得该能力。
 
@@ -182,7 +182,7 @@ stateDiagram-v2
 
 ## 已验证范围
 
-focused 测试已覆盖：官方 SDK 2.8.0 身份、官方 Context/配置注入、`@` 入站段、plain text、媒体和
+focused 测试已覆盖：官方 SDK 2.17.0 身份、官方 Context/配置注入、`@` 入站段、plain text、媒体和
 未知协议段保留、来源路由的图片发送、命令阻断、事件排序、Tool/Action 名称隔离、静态/动态 API 原子性、
 拒绝的 gateway/capability、依赖版本与递归 YesMai 准入、配置回滚、模块前缀清理、旧名称迁移，以及
 `llm.generate` 的 task/model 分流、请求覆盖、reasoning/ToolCall 映射和失败传播。真实 `PluginManager`
@@ -191,3 +191,5 @@ focused 测试已覆盖：官方 SDK 2.8.0 身份、官方 Context/配置注入�
 LLM 测试在公开 `llm_api` / `LLMRequest` 边界使用替身验证映射和错误传播，尚不是已配置外部模型供应商
 的网络端到端请求。真实生产 Adapter、所有外部 capability 和生产模型供应商仍需分别验收；未覆盖能力应
 视为未支持。
+
+

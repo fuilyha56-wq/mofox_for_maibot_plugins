@@ -1,12 +1,12 @@
 # MaiBot SDK 兼容桥可验证设计
 
 > **状态：受限官方 SDK 子集已实施；focused、宿主 PluginManager/EventBus 集成与入站媒体/显式 LLM 覆盖验收通过。**  
-> **SDK 基线：`maibot-plugin-sdk==2.7.1`。**  
-> 本文定义 `MofoxForMaibotPulgins` 的官方 SDK 2.7.1 兼容子集。桥不再以自制 `maibot_sdk`、YesMai shim 或空实现作为成功依据。
+> **SDK 基线：`maibot-plugin-sdk==2.17.0`。**  
+> 本文定义 `MofoxForMaibotPulgins` 的官方 SDK 2.17.0 兼容子集。桥不再以自制 `maibot_sdk`、YesMai shim 或空实现作为成功依据。
 
 ## 实施状态（2026-08）
 
-已实施并有 focused 测试证据：官方 SDK 2.7.1 版本验证与 Context/配置注入、生命周期覆盖
+已实施并有 focused 测试证据：官方 SDK 2.17.0 版本验证与 Context/配置注入、生命周期覆盖
 准入、字符串和结构化 Python dependency 的安装/版本校验、递归 YesMai 导入/依赖拒绝、`Command`、`ON_MESSAGE`
 EventHandler、Tool/兼容 Action 的 namespaced `BaseTool` 及组件快照缓存、桥域静态/动态 API 原子性、
 来源路由的文本/图片/表情发送、入站 plain text/媒体/协议未知段/宿主未知段保留（归一化不修改原始
@@ -17,35 +17,35 @@ reasoning/ToolCall 映射和失败传播、状态门与模块前缀清理、受�
 命令、来源路由图片发送、构造期 Tool 注册及其反向执行，以及动态 Tool 在宿主 LLM 回路中的真实执行。
 
 旧本地 `maibot_sdk`、YesMai shim、私有 `ConfigManager` 配置合并实现及其手工测试已移除；官方
-`maibot-plugin-sdk==2.7.1` 是桥唯一允许的 SDK 运行时。
+`maibot-plugin-sdk==2.17.0` 是桥唯一允许的 SDK 运行时。
 
 仍待完成或以真实运行时验证：真实 Adapter 端到端加载、显式 LLM 的实际外部模型供应商网络请求，以及宿主
-公开配置扩展 API 出现后的 WebUI 配置集成。官方 SDK 2.7.1 本身没有公开的受管后台任务 capability；桥只
+公开配置扩展 API 出现后的 WebUI 配置集成。官方 SDK 2.17.0 本身没有公开的受管后台任务 capability；桥只
 管理自身内部任务，不能伪造第三方 `PluginContext` 的任务注册入口。本文的“实施必须”条目在未被该状态段
 明确列为已实施前，仍是验收要求，不应被解释为已完成承诺。
 
 ## 1. 决策摘要
 
-MaiBot 桥将运行**官方 2.7.1 SDK 语义的受限子集**，并遵守以下决策：
+MaiBot 桥将运行**官方 2.17.0 SDK 语义的受限子集**，并遵守以下决策：
 
-- 外部插件必须针对 `maibot-plugin-sdk==2.7.1`；导入面、`PluginContext`、组件收集和生命周期以该版本实际源码为准；
+- 外部插件必须针对 `maibot-plugin-sdk==2.17.0`；导入面、`PluginContext`、组件收集和生命周期以该版本实际源码为准；
 - 使用官方 `MaiBotPlugin._set_context()` 和 `set_plugin_config()` 注入，而不是向 `instance.ctx` / `instance.config` 直接赋值；
 - `Command`、`Tool`、官方兼容 `Action`、`EventHandler` 的已映射子集和桥域内 API 可工作；
-- `Action` 在 2.7.1 中是 Tool 兼容声明，因此映射为宿主 `BaseTool`，**不**伪装为 Neo-MoFox `BaseAction`；
+- `Action` 在 2.17.0 中是 Tool 兼容声明，因此映射为宿主 `BaseTool`，**不**伪装为 Neo-MoFox `BaseAction`；
 - 无公开且无损宿主映射的 `MessageGateway`、`LLMProvider`、`HomeCard`、`WorkflowStep` 和未映射 `HookHandler` 在准入期拒绝；
 - 外部插件使用精确的 `PluginContext` 和受控 RPC 分派；未实现 capability 必须报错，不返回 `True` / 空对象；
-- 本文不覆盖 YesMai。若以后需要 YesMai，应另立版本化设计和验收矩阵，不能混入标准 MaiBot 2.7.1 路径。
+- 本文不覆盖 YesMai。若以后需要 YesMai，应另立版本化设计和验收矩阵，不能混入标准 MaiBot 2.17.0 路径。
 
 ## 2. 已核验的 SDK 与宿主事实
 
 | 事实 | 设计结论 |
 | --- | --- |
-| SDK 2.7.1 的组件类型为 `ACTION`、`API`、`COMMAND`、`TOOL`、`EVENT_HANDLER`、`HOOK_HANDLER`、`HOME_CARD`、`MESSAGE_GATEWAY`，且 LLM Provider 独立收集 | 准入必须调用官方 `get_components()` / `get_llm_providers()` 或其等价官方收集函数，不能只扫描自制装饰器。 |
-| `WorkflowStep()` 在 SDK 2.7.1 明确抛出 `RuntimeError` | 桥不得把它转为 Hook 或忽略错误。 |
+| SDK 2.17.0 的组件类型为 `ACTION`、`API`、`COMMAND`、`TOOL`、`EVENT_HANDLER`、`HOOK_HANDLER`、`HOME_CARD`、`MESSAGE_GATEWAY`，且 LLM Provider 独立收集 | 准入必须调用官方 `get_components()` / `get_llm_providers()` 或其等价官方收集函数，不能只扫描自制装饰器。 |
+| `WorkflowStep()` 在 SDK 2.17.0 明确抛出 `RuntimeError` | 桥不得把它转为 Hook 或忽略错误。 |
 | `MaiBotPlugin.on_load()`、`on_unload()`、`on_config_update()` 基类默认抛 `NotImplementedError` | 生命周期未覆盖的插件不具备可激活资格。 |
 | `MaiBotPlugin` 有 `_set_context()`、`set_plugin_config()`、`register_dynamic_api()`、`sync_dynamic_apis()` | 必须通过这些语义入口注入/同步，不直接覆盖私有状态或伪造同步成功。 |
 | 官方 `PluginContext` 构造后提供 `api`、`gateway`、`send`、`db`、`llm`、`config`、`emoji`、`message`、`frequency`、`component`、`chat`、`person`、`render`、`knowledge`、`tool`、`statistics`、`maisaka` 等能力代理 | 使用真实 SDK `PluginContext(plugin_id, rpc_call, paths)`，由桥实现受控 `rpc_call`；每个未支持 capability 都明确失败。 |
-| 官方 SDK 2.7.1 未公开受管后台任务 capability | 桥可用 `TaskManager` 管理内部协程，但不得添加或伪造 `ctx.register_task()`。 |
+| 官方 SDK 2.17.0 未公开受管后台任务 capability | 桥可用 `TaskManager` 管理内部协程，但不得添加或伪造 `ctx.register_task()`。 |
 | 原始 Host RPC 白名单为 `cap.call`、`host.route_message`、`host.update_message_gateway_state` | 桥的 RPC 接收器也只接受这三个方法名。 |
 | Neo-MoFox 插件组件在 `get_components()` 后快照注册，卸载不自动清理桥任务或 Router | 外部工具类必须预生成；桥负责任务、Router 和模块清理。 |
 | `ModelClientRegistry` 是 slots dataclass，且宿主没有公开通用 Provider 注册接口 | 不能 monkey-patch 客户端选择逻辑支持 `@LLMProvider`。 |
@@ -61,7 +61,7 @@ MaiBot 桥将运行**官方 2.7.1 SDK 语义的受限子集**，并遵守以下�
 
 ## 4. 绝对不变量
 
-1. **只认官方基线。** SDK 版本、公共导出和关键行为需在测试中与 2.7.1 断言；不再让桥自制 stub 悄悄替代它。
+1. **只认官方基线。** SDK 版本、公共导出和关键行为需在测试中与 2.17.0 断言；不再让桥自制 stub 悄悄替代它。
 2. **不伪成功。** `register_dynamic_api()`、`sync_dynamic_apis()`、发送、LLM、权限、渲染等操作只在真实完成后返回成功。
 3. **不直接赋值注入。** 配置经 `set_plugin_config()`，上下文经 `_set_context()`；插件可观察到的是实际官方 `PluginContext` 实例。
 4. **不修改私有宿主状态。** 不访问 `ConfigManager._configs`，不 monkey-patch LLM client registry，不通过私有 Adapter/WebSocket 发送。
@@ -76,7 +76,7 @@ MaiBot 桥将运行**官方 2.7.1 SDK 语义的受限子集**，并遵守以下�
 候选目录必须满足：
 
 1. 存在 `plugin.py`；
-2. `_manifest.json`（如存在）声明的 SDK 范围包含 2.7.1；
+2. `_manifest.json`（如存在）声明的 SDK 范围包含 2.17.0；
 3. 导入依赖均已由用户通过项目的 `uv` 环境安装；桥不在运行时执行隐式 `pip install`。外部 manifest 中的 Python 依赖应由桥的受控安装/准入流程在导入前报告、安装或拒绝，不能在插件导入后静默缺失；
 4. 可创建一个且仅一个 `MaiBotPlugin` 实例；
 5. `on_load()`、`on_unload()`、`on_config_update()` 均由插件覆盖，且不等于 SDK 基类的强制 `NotImplementedError` 实现；
@@ -105,8 +105,8 @@ MaiBot 桥将运行**官方 2.7.1 SDK 语义的受限子集**，并遵守以下�
 | `@LLMProvider` | 宿主无公开的 Provider 注册点；修改 slots 客户端表或拦截私有选择逻辑不可靠。 |
 | `@HomeCard` | 宿主没有公开、可按 SDK 数据语义渲染的首页卡片扩展点。 |
 | `@HookHandler` | 当前版本未建立可保持 mode/order/error_policy/参数语义的完整映射；不降级为任意 EventBus 订阅。 |
-| `WorkflowStep` | SDK 2.7.1 本身已移除。 |
-| 旧 `src.plugin_system` / legacy adapter API | 不是 MaiBot SDK 2.7.1 的公共面。 |
+| `WorkflowStep` | SDK 2.17.0 本身已移除。 |
+| 旧 `src.plugin_system` / legacy adapter API | 不是 MaiBot SDK 2.17.0 的公共面。 |
 | YesMai 导入或 `com.yesmai.*` 依赖 | 独立兼容目标，不属于本桥的 MaiBot 基线。 |
 | `EventHandler` 的非 `ON_MESSAGE` 事件 | 还没有可验证的一对一宿主事件映射。 |
 | 外部工具在 `on_load()` 之后首次出现 | 已错过宿主组件快照。 |
@@ -213,7 +213,7 @@ maibot__{slug}__{external_name}
 4. 原样规范化成功/失败内容；
 5. 释放 lease。
 
-`Action` 不生成 `BaseAction`，因为 2.7.1 的 Action 是兼容 Tool 声明。若插件要求 Neo-MoFox action 选择器语义，应被拒绝而不是得到错误的自动触发行为。
+`Action` 不生成 `BaseAction`，因为 2.17.0 的 Action 是兼容 Tool 声明。若插件要求 Neo-MoFox action 选择器语义，应被拒绝而不是得到错误的自动触发行为。
 
 ### 7.4 桥域 API 与动态 API
 
@@ -300,7 +300,7 @@ maibot__{slug}__{external_name}
 
 | 编号 | 场景 | 断言 |
 | --- | --- | --- |
-| M01 | SDK 身份 | 导入的公共符号、`WorkflowStep` 异常和 `PluginContext` 注入语义符合 2.7.1。 |
+| M01 | SDK 身份 | 导入的公共符号、`WorkflowStep` 异常和 `PluginContext` 注入语义符合 2.17.0。 |
 | M02 | 生命周期未覆盖 | 基类 `NotImplementedError` 插件被准入拒绝。 |
 | M03 | 头像插件载入 | `set_plugin_config()` / `_set_context()` 被调用；`self.ctx` 是官方 `PluginContext`。 |
 | M04 | `@` 入站段 | 命令收到结构化 `raw_message` 的 `at.target_user_id`。 |
@@ -320,7 +320,7 @@ maibot__{slug}__{external_name}
 
 ## 12. 实施顺序与退出标准
 
-1. 替换为官方 2.7.1 SDK 导入面，并建立 SDK 身份测试；
+1. 替换为官方 2.17.0 SDK 导入面，并建立 SDK 身份测试；
 2. 实现预备阶段、官方 Context/配置注入和严格准入；
 3. 实现 Command、Tool、Action、`ON_MESSAGE` EventHandler 的真实分派；
 4. 实现桥域 API、capability RPC 和媒体发送；
@@ -329,3 +329,4 @@ maibot__{slug}__{external_name}
 7. 删除当前自制 SDK、直接赋值注入、文本降级、旧 YesMai 默认路径、动态 API no-op 和所有伪成功分支。
 
 只有第 11 节全部通过后，README 才可把对应能力标记为“已支持”；其余能力必须继续标记为“拒绝/未支持”。
+

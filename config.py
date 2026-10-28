@@ -40,3 +40,4 @@ class MaiBotCompatConfig(BaseConfig):
         config_version: str = Field(default="0.2.0", description="配置版本", label="配置版本", disabled=True)
 
     plugin: PluginSection = Field(default_factory=PluginSection)
+

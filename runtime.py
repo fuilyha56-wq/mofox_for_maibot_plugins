@@ -1,4 +1,4 @@
-"""官方 MaiBot SDK 2.8.0 外部插件的受限桥运行时。
+"""官方 MaiBot SDK 2.17.0 外部插件的受限桥运行时。
 
 本模块不会注入本地 shim、不会加载 YesMai，也不会为没有公开宿主映射的能力
 伪造成功。每一个外部插件都是独立单元，在 Neo-MoFox 组件快照前完成导入、
@@ -30,6 +30,7 @@ from src.app.plugin_system.api import (
     llm_api,
     message_api,
     permission_api,
+    plugin_api,
     send_api,
     stream_api,
 )
@@ -80,6 +81,14 @@ _SUPPORTED_CAPABILITIES = frozenset(
         "message.get_by_time_in_chat",
         "person.get_id",
         "chat.open_session",
+        "component.get_all_plugins",
+        "component.get_plugin_info",
+        "component.get_plugin_config_schema",
+        "component.list_loaded_plugins",
+        "component.list_registered_plugins",
+        "component.load_plugin",
+        "component.unload_plugin",
+        "component.reload_plugin",
     }
 )
 
@@ -458,7 +467,7 @@ class MaiBotRealm:
 
 
 class MaiBotRuntime:
-    """单个官方 MaiBot SDK 2.8.0 插件的隔离运行时。"""
+    """单个官方 MaiBot SDK 2.17.0 插件的隔离运行时。"""
 
     def __init__(self, realm: MaiBotRealm | None = None) -> None:
         """创建未加载的单元；默认桥域仅方便独立测试。"""
@@ -1104,6 +1113,60 @@ class MaiBotRuntime:
                 "success": True,
                 "stream": {"stream_id": getattr(stream, "stream_id", "")},
             }
+        if capability == "component.get_all_plugins":
+            plugins = plugin_api.get_all_plugins()
+            return {
+                "success": True,
+                "plugins": [
+                    {
+                        "name": name,
+                        "version": str(getattr(plugin, "plugin_version", "")),
+                        "description": str(getattr(plugin, "plugin_description", "")),
+                    }
+                    for name, plugin in sorted(plugins.items())
+                ],
+            }
+        if capability == "component.get_plugin_info":
+            name = str(args.get("plugin_name") or "").strip()
+            plugin = plugin_api.get_plugin(name) if name else None
+            if plugin is None:
+                return {"success": True, "plugin": None}
+            return {
+                "success": True,
+                "plugin": {
+                    "name": name,
+                    "version": str(getattr(plugin, "plugin_version", "")),
+                    "description": str(getattr(plugin, "plugin_description", "")),
+                    "loaded": plugin_api.is_plugin_loaded(name),
+                    "path": plugin_api.get_plugin_path(name),
+                },
+            }
+        if capability == "component.get_plugin_config_schema":
+            raise UnsupportedMaiBotCapabilityError(
+                "宿主未公开查询插件配置 Schema 的 API"
+            )
+        if capability == "component.list_loaded_plugins":
+            return {"success": True, "plugins": plugin_api.list_loaded_plugins()}
+        if capability == "component.list_registered_plugins":
+            from src.core.components.loader import list_registered_plugins
+
+            return {"success": True, "plugins": list_registered_plugins()}
+        if capability in {"component.load_plugin", "component.unload_plugin", "component.reload_plugin"}:
+            name = str(args.get("plugin_name") or "").strip()
+            if not name:
+                raise UnsupportedMaiBotCapabilityError(f"{capability} 需要 plugin_name")
+            if name in {self.plugin_id, "mofox_for_maibot_plugins"}:
+                raise UnsupportedMaiBotCapabilityError("MaiBot 外部插件不能管理其自身桥宿主")
+            if capability == "component.load_plugin":
+                plugin_path = plugin_api.get_plugin_path(name)
+                if not plugin_path:
+                    return {"success": False, "result": False, "reason": "插件路径不存在"}
+                result = await plugin_api.load_plugin(plugin_path)
+            elif capability == "component.unload_plugin":
+                result = await plugin_api.unload_plugin(name)
+            else:
+                result = await plugin_api.reload_plugin(name)
+            return {"success": bool(result), "result": result}
         raise UnsupportedMaiBotCapabilityError(
             f"未映射 MaiBot capability: {capability}"
         )
@@ -1293,7 +1356,7 @@ def _read_manifest(directory: Path) -> dict[str, Any]:
         if minimum and _version_tuple(minimum) > _version_tuple(SDK_VERSION):
             raise MaiBotUnitAdmissionError("外部插件要求更高版本 MaiBot SDK")
         if maximum and _version_tuple(maximum) < _version_tuple(SDK_VERSION):
-            raise MaiBotUnitAdmissionError("外部插件 SDK 上限不包含 2.8.0")
+            raise MaiBotUnitAdmissionError("外部插件 SDK 上限不包含 2.17.0")
     declared = manifest.get("capabilities")
     if isinstance(declared, list):
         unsupported = sorted(
@@ -1350,7 +1413,7 @@ def _validate_manifest_dependencies(manifest: dict[str, Any]) -> None:
         package_name = requirement.name
         if package_name.lower().replace("_", "-") in {"yesmai", "maibot-yesmai"}:
             raise MaiBotUnitAdmissionError(
-                "标准 MaiBot 2.8.0 bridge 不接受 YesMai 依赖"
+                "标准 MaiBot 2.17.0 bridge 不接受 YesMai 依赖"
             )
         try:
             installed_version = importlib.metadata.version(package_name)
@@ -1378,7 +1441,7 @@ def _reject_yesmai_imports(plugin_dir: Path) -> None:
             source,
         ):
             raise MaiBotUnitAdmissionError(
-                f"标准 MaiBot 2.8.0 bridge 不接受 YesMai 导入: {source_file.name}"
+                f"标准 MaiBot 2.17.0 bridge 不接受 YesMai 导入: {source_file.name}"
             )
 
 
@@ -1734,3 +1797,4 @@ __all__ = [
     "namespaced_tool_name",
     "_normalize_inbound_message",
 ]
+

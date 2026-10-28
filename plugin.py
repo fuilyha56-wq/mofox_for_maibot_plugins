@@ -1,4 +1,4 @@
-"""官方 MaiBot SDK 2.8.0 的 Neo-MoFox 受限兼容桥。"""
+"""官方 MaiBot SDK 2.17.0 的 Neo-MoFox 受限兼容桥。"""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class MaiBotPluginBridge(BaseEventHandler):
     """将 Neo-MoFox 入站消息分派给构造期预备的 MaiBot 单元。"""
 
     name = "maibot_plugin_bridge"
-    description = "官方 MaiBot SDK 2.8.0 消息事件桥"
+    description = "官方 MaiBot SDK 2.17.0 消息事件桥"
     init_subscribe = [EventType.ON_MESSAGE_RECEIVED]
     timeout = 0
 
@@ -204,11 +204,11 @@ def _make_tool_class(
 
 @register_plugin
 class MaiBotCompatPlugin(BasePlugin):
-    """MaiBot 官方 SDK 2.8.0 受限桥插件根组件。"""
+    """MaiBot 官方 SDK 2.17.0 受限桥插件根组件。"""
 
     plugin_name = "mofox_for_maibot_plugins"
-    plugin_description = "在 Neo-MoFox 中运行受限的官方 MaiBot SDK 2.8.0 插件"
-    plugin_version = "0.1.4"
+    plugin_description = "在 Neo-MoFox 中运行受限的官方 MaiBot SDK 2.17.0 插件"
+    plugin_version = "0.2.1"
     configs = [MaiBotCompatConfig]
 
     def __init__(self, config: MaiBotCompatConfig | None = None) -> None:
@@ -319,3 +319,4 @@ def _migrate_legacy_paths() -> None:
 
 
 __all__ = ["MaiBotBridge", "MaiBotCompatPlugin", "MaiBotPluginBridge"]
+

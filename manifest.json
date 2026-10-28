@@ -1,17 +1,38 @@
 {
-  "name": "mofox_for_maibot_plugins",
-  "display_name": "MofoxForMaibotPulgins",
-  "version": "0.1.4",
-  "description": "在 MoFox 中加载受限的官方 MaiBot SDK 2.8.0 插件。",
-  "author": "MoFox Community",
-  "dependencies": {"plugins": [], "components": []},
-  "include": [{"component_type": "event_handler", "component_name": "maibot_plugin_bridge", "dependencies": []}],
-  "entry_point": "plugin.py",
-  "min_core_version": "1.2.0-rc.2",
-  "api_version": {"event_api": "1.0.0"},
-  "python_dependencies": ["maibot-plugin-sdk==2.8.0"],
-  "dependencies_required": true,
-  "license": "AGPL-3.0",
-  "categories": ["tool"],
-  "tags": ["maibot", "compat", "bridge", "sdk", "plugin-loader"]
+    "name": "mofox_for_maibot_plugins",
+    "display_name": "MofoxForMaibotPulgins",
+    "version": "0.2.1",
+    "description": "在 MoFox 中加载受限的官方 MaiBot SDK 2.17.0 插件。",
+    "author": "MoFox Community",
+    "dependencies": {
+        "plugins": [],
+        "components": []
+    },
+    "include": [
+        {
+            "component_type": "event_handler",
+            "component_name": "maibot_plugin_bridge",
+            "dependencies": []
+        }
+    ],
+    "entry_point": "plugin.py",
+    "min_core_version": "1.2.0-rc.2",
+    "api_version": {
+        "event_api": "1.0.0"
+    },
+    "python_dependencies": [
+        "maibot-plugin-sdk==2.17.0"
+    ],
+    "dependencies_required": true,
+    "license": "AGPL-3.0",
+    "categories": [
+        "tool"
+    ],
+    "tags": [
+        "maibot",
+        "compat",
+        "bridge",
+        "sdk",
+        "plugin-loader"
+    ]
 }
